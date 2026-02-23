@@ -1,0 +1,33 @@
+---
+namespace: cozystack
+name: installer
+version: 1.0.0-rc.1
+readme: README.md
+authors:
+  - Aleksei Sviridkin <f@lex.la>
+  - Aenix <info@aenix.io>
+description: >-
+  Install Cozystack on generic Kubernetes clusters (k3s, kubeadm, RKE2).
+  Deploys the Cozystack operator and Platform Package via containerized Helm.
+license:
+  - Apache-2.0
+repository: https://github.com/cozystack/ansible-cozystack
+homepage: https://cozystack.io
+documentation: https://cozystack.io/docs
+dependencies:
+  ansible.posix: ">=1.0.0"
+  kubernetes.core: ">=5.0.0"
+tags:
+  - infrastructure
+  - cloud
+  - kubernetes
+  - cozystack
+build_ignore:
+  - "*.tar.gz"
+  - ".git"
+  - ".github"
+  - ".ansible"
+  - ".ansible-lint"
+  - ".gitignore"
+  - "requirements.yml"
+  - "tests"

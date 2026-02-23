@@ -1,0 +1,31 @@
+---
+apiVersion: cozystack.io/v1alpha1
+kind: Package
+metadata:
+  name: cozystack.cozystack-platform
+  namespace: {{ cozystack_namespace }}
+spec:
+  variant: {{ cozystack_platform_variant }}
+  components:
+    networking:
+      values:
+        cilium:
+          k8sServiceHost: {{ cozystack_api_server_host | to_json }}
+          k8sServicePort: {{ cozystack_api_server_port | to_json }}
+          cgroup:
+            autoMount:
+              enabled: true
+        kube-ovn:
+          MASTER_NODES: {{ cozystack_api_server_host | to_json }}
+    platform:
+      values:
+        networking:
+          podCIDR: {{ cozystack_pod_cidr | to_json }}
+          podGateway: {{ cozystack_pod_gateway | to_json }}
+          serviceCIDR: {{ cozystack_svc_cidr | to_json }}
+          joinCIDR: {{ cozystack_join_cidr | to_json }}
+{% if cozystack_root_host | length > 0 %}
+        publishing:
+          host: {{ cozystack_root_host | to_json }}
+          apiServerEndpoint: {{ _cozystack_api_endpoint | to_json }}
+{% endif %}

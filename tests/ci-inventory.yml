@@ -1,0 +1,28 @@
+---
+# CI inventory: runs on the GitHub Actions Ubuntu runner itself.
+# k3s is installed directly on the runner (no containers/VMs).
+cluster:
+  children:
+    server:
+      hosts:
+        localhost:
+          ansible_connection: local
+    agent:
+      hosts: {}
+
+  vars:
+    ansible_user: runner
+
+    # k3s configuration
+    k3s_version: v1.35.0+k3s3
+    token: "ci-test-token"
+    api_endpoint: "127.0.0.1"
+    cluster_context: ci-test
+
+    # Cozystack configuration
+    cozystack_api_server_host: "127.0.0.1"
+    cozystack_root_host: "cozy.ci-test.local"
+    cozystack_platform_variant: "isp-full-generic"
+
+    # CI-specific: no iptables flush needed
+    cozystack_flush_iptables: false

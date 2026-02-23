@@ -1,0 +1,110 @@
+---
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install ansible-core ansible-lint
+
+      - name: Build and install collection
+        run: |
+          ansible-galaxy collection build
+          ansible-galaxy collection install cozystack-installer-*.tar.gz --force
+
+      - name: Install collection dependencies
+        run: ansible-galaxy collection install --requirements-file requirements.yml
+
+      - name: Run ansible-lint
+        run: ansible-lint
+
+  sanity:
+    name: Sanity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: ansible_collections/cozystack/installer
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-core
+        run: pip install ansible-core
+
+      - name: Run sanity tests
+        working-directory: ansible_collections/cozystack/installer
+        run: ansible-test sanity --color
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Build and install collection
+        run: |
+          ansible-galaxy collection build
+          ansible-galaxy collection install cozystack-installer-*.tar.gz --force
+
+      - name: Install collection dependencies
+        run: ansible-galaxy collection install --requirements-file requirements.yml
+
+      - name: Run full pipeline
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook examples/site.yml
+          --inventory tests/ci-inventory.yml
+
+      - name: Verify operator is running
+        run: |
+          sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
+            wait deployment/cozystack-operator \
+            --namespace cozy-system \
+            --timeout=120s \
+            --for=condition=Available
+
+      - name: Verify CRDs are established
+        run: |
+          sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
+            wait crd/packages.cozystack.io \
+            --for=condition=Established \
+            --timeout=60s
+
+      - name: Verify Platform Package exists
+        run: |
+          sudo kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml \
+            get package cozystack.cozystack-platform \
+            --namespace cozy-system
+
+      - name: Test idempotency (second run)
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook examples/site.yml
+          --inventory tests/ci-inventory.yml

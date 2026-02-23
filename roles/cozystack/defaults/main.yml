@@ -1,0 +1,63 @@
+---
+# REQUIRED variables (must be set in inventory):
+#   cozystack_api_server_host — internal IP of the control-plane node
+#                               (the IP visible on the node's network interface,
+#                               NOT a public/NAT IP)
+
+# ---- Helm chart settings ----
+
+# Official Cozystack installer chart OCI reference
+cozystack_chart_ref: "oci://ghcr.io/cozystack/cozystack/cozy-installer"
+
+# Helm chart version (synced with Cozystack release)
+cozystack_chart_version: "1.0.0-rc.1"
+
+# Helm release name
+cozystack_release_name: "cozy-installer"
+
+# Kubernetes namespace where Cozystack operator and resources live
+cozystack_namespace: "cozy-system"
+
+# Namespace for the Helm release secret (the chart creates cozy-system
+# via its own template, so the release must live in a pre-existing namespace)
+cozystack_release_namespace: "kube-system"
+
+# Operator deployment variant: generic, talos, hosted
+cozystack_operator_variant: "generic"
+
+# API server port (used by operator to connect to k8s API)
+cozystack_api_server_port: "6443"
+
+# Path to kubeconfig on the target node
+cozystack_kubeconfig: "/etc/rancher/k3s/k3s.yaml"
+
+# Helm binary version to install on the target node
+cozystack_helm_version: "3.17.3"
+
+# Path to Helm binary on the target node
+cozystack_helm_binary: "/usr/local/bin/helm"
+
+# helm-diff plugin version (v3.13.0+ requires Helm 4 plugin.yaml format)
+cozystack_helm_diff_version: "3.12.5"
+
+# ---- Platform Package settings ----
+
+# Whether to create the Platform Package CR after chart install
+cozystack_create_platform_package: true
+
+# Platform Package variant (determines which platform components are deployed)
+# Available: default, isp-full, isp-hosted, isp-full-generic
+cozystack_platform_variant: "isp-full-generic"
+
+# Domain for Cozystack services (dashboard, grafana, etc.)
+# Leave empty to skip publishing config in the Platform Package
+cozystack_root_host: ""
+
+# Network CIDRs for the Platform Package (defaults match k3s)
+cozystack_pod_cidr: "10.42.0.0/16"
+cozystack_pod_gateway: "10.42.0.1"
+cozystack_svc_cidr: "10.43.0.0/16"
+cozystack_join_cidr: "100.64.0.0/16"
+
+# Timeout to wait for operator and CRDs (seconds)
+cozystack_operator_wait_timeout: "300"

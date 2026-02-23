@@ -1,0 +1,145 @@
+---
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - cozystack_api_server_host is defined
+      - cozystack_api_server_host | length > 0
+    fail_msg: >-
+      cozystack_api_server_host must be defined and non-empty.
+      It must be the node's INTERNAL IP
+      (visible on network interface, not public/NAT IP).
+
+- name: Set architecture for Helm download
+  ansible.builtin.set_fact:
+    _cozystack_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Check installed Helm version
+  ansible.builtin.command:
+    cmd: "{{ cozystack_helm_binary }} version --short"
+  register: _cozystack_helm_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Helm binary
+  ansible.builtin.unarchive:
+    src: "https://get.helm.sh/helm-v{{ cozystack_helm_version }}-linux-{{ _cozystack_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+      - "linux-{{ _cozystack_arch }}/helm"
+  become: true
+  when:
+    - not ansible_check_mode
+    - cozystack_helm_version not in (_cozystack_helm_version_check.stdout | default(''))
+
+- name: Ensure git is installed (required by helm plugin install)
+  ansible.builtin.package:
+    name: git
+    state: present
+  become: true
+
+- name: Install helm-diff plugin
+  kubernetes.core.helm_plugin:
+    plugin_path: https://github.com/databus23/helm-diff
+    plugin_version: "{{ cozystack_helm_diff_version }}"
+    state: present
+    binary_path: "{{ cozystack_helm_binary }}"
+  become: true
+  when: not ansible_check_mode
+
+- name: Install Cozystack chart
+  kubernetes.core.helm:
+    release_name: "{{ cozystack_release_name }}"
+    chart_ref: "{{ cozystack_chart_ref }}"
+    chart_version: "{{ cozystack_chart_version }}"
+    release_namespace: "{{ cozystack_release_namespace }}"
+    kubeconfig: "{{ cozystack_kubeconfig }}"
+    binary_path: "{{ cozystack_helm_binary }}"
+    values:
+      cozystackOperator:
+        variant: "{{ cozystack_operator_variant }}"
+      cozystack:
+        apiServerHost: "{{ cozystack_api_server_host }}"
+        apiServerPort: "{{ cozystack_api_server_port }}"
+  become: true
+  when: not ansible_check_mode
+
+- name: Wait for operator deployment to be available
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      wait deployment/cozystack-operator
+      --namespace {{ cozystack_namespace }}
+      --timeout={{ cozystack_operator_wait_timeout }}s
+      --for=condition=Available
+  become: true
+  changed_when: false
+  when:
+    - cozystack_create_platform_package
+    - not ansible_check_mode
+
+- name: Wait for Package CRD to be established
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      wait crd/packages.cozystack.io
+      --for=condition=Established
+      --timeout={{ cozystack_operator_wait_timeout }}s
+  become: true
+  changed_when: false
+  register: crd_wait
+  retries: 5
+  delay: 10
+  until: crd_wait.rc == 0
+  when:
+    - cozystack_create_platform_package
+    - not ansible_check_mode
+
+- name: Construct API server endpoint
+  ansible.builtin.set_fact:
+    _cozystack_api_endpoint: "https://{{ cozystack_api_server_host }}:{{ cozystack_api_server_port }}"
+  when: cozystack_create_platform_package
+
+- name: Generate Platform Package manifest
+  ansible.builtin.template:
+    src: platform-package.yml.j2
+    dest: /tmp/cozystack-platform-package.yml
+    mode: "0600"
+  become: true
+  changed_when: false
+  when: cozystack_create_platform_package
+
+- name: Check if Platform Package differs from cluster state
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      diff --filename /tmp/cozystack-platform-package.yml
+  become: true
+  register: platform_diff
+  changed_when: platform_diff.rc == 1
+  failed_when: platform_diff.rc > 1
+  when:
+    - cozystack_create_platform_package
+    - not ansible_check_mode
+
+- name: Apply Platform Package
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      apply --filename /tmp/cozystack-platform-package.yml
+  become: true
+  register: platform_apply
+  changed_when: platform_apply.rc == 0
+  when:
+    - cozystack_create_platform_package
+    - platform_diff is changed
+    - not ansible_check_mode
+
+- name: Remove temporary Platform Package manifest
+  ansible.builtin.file:
+    path: /tmp/cozystack-platform-package.yml
+    state: absent
+  become: true
+  changed_when: false
+  when: cozystack_create_platform_package
