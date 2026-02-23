@@ -1,0 +1,9 @@
+---
+collections:
+  - name: ansible.posix
+  - name: community.general
+  - name: kubernetes.core
+  - name: k3s.orchestration
+    source: https://github.com/k3s-io/k3s-ansible.git
+    type: git
+    version: 77b49f76ce744fa265088e95e9a49a57a6675a54

@@ -1,0 +1,7 @@
+---
+- name: Install Cozystack
+  hosts: server[0]
+  become: true
+  gather_facts: true
+  roles:
+    - cozystack.installer.cozystack

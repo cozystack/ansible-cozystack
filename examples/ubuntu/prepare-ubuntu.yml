@@ -1,0 +1,120 @@
+---
+# Example: Prepare Ubuntu/Debian nodes for Cozystack
+# This playbook installs required packages, configures kernel parameters,
+# and sets k3s server arguments compatible with k3s.orchestration collection.
+#
+# Works on both Ubuntu and Debian (same packages and apt module).
+#
+# Run before k3s deployment: ansible-playbook prepare-ubuntu.yml
+
+- name: Prepare Ubuntu/Debian nodes for Cozystack
+  hosts: cluster
+  become: true
+  vars:
+    # Packages required by Cozystack (storage backends)
+    cozystack_packages:
+      - nfs-common
+      - open-iscsi
+      - multipath-tools
+
+    # Kernel parameters for Cozystack
+    cozystack_sysctl_params:
+      - { name: fs.inotify.max_user_watches, value: "524288" }
+      - { name: fs.inotify.max_user_instances, value: "8192" }
+      - { name: fs.inotify.max_queued_events, value: "65536" }
+      - { name: fs.file-max, value: "2097152" }
+      - { name: fs.aio-max-nr, value: "1048576" }
+      - { name: net.ipv4.ip_forward, value: "1" }
+      - { name: net.ipv4.conf.all.forwarding, value: "1" }
+      - { name: vm.swappiness, value: "1" }
+
+    # Set to true on providers with restrictive iptables rules (OCI, etc.)
+    # WARNING: This flushes live iptables rules only (not persistent).
+    # Also stops ufw to prevent rule restoration.
+    cozystack_flush_iptables: false
+
+    # k3s server arguments required by Cozystack.
+    # These disable built-in components that Cozystack replaces.
+    cozystack_k3s_server_args: >-
+      --disable=traefik
+      --disable=servicelb
+      --disable=local-storage
+      --disable=metrics-server
+      --disable-network-policy
+      --disable-kube-proxy
+      --flannel-backend=none
+      --cluster-domain=cozy.local
+      --kubelet-arg=max-pods=220
+
+    # Additional k3s server arguments (user-provided).
+    # Use for environment-specific flags like --tls-san.
+    cozystack_k3s_extra_args: ""
+
+    # k3s server config YAML (CIDRs).
+    cozystack_k3s_server_config_yaml: |
+      cluster-cidr: 10.42.0.0/16
+      service-cidr: 10.43.0.0/16
+
+  tasks:
+    - name: Create k3s_cluster group for k3s.orchestration
+      ansible.builtin.group_by:
+        key: k3s_cluster
+
+    - name: Set k3s server args for Cozystack
+      ansible.builtin.set_fact:
+        extra_server_args: >-
+          {{ cozystack_k3s_server_args }}
+          {{ cozystack_k3s_extra_args }}
+      when: extra_server_args is not defined
+
+    - name: Set k3s server config for Cozystack
+      ansible.builtin.set_fact:
+        server_config_yaml: "{{ cozystack_k3s_server_config_yaml }}"
+      when: server_config_yaml is not defined
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name: "{{ cozystack_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Configure sysctl parameters
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop: "{{ cozystack_sysctl_params }}"
+
+    - name: Stop and disable ufw
+      ansible.builtin.systemd:
+        name: ufw
+        enabled: false
+        state: stopped
+      when: cozystack_flush_iptables
+      failed_when: false
+
+    - name: Flush iptables INPUT chain
+      ansible.builtin.iptables:
+        chain: INPUT
+        flush: true
+      when: cozystack_flush_iptables
+
+    - name: Set iptables INPUT policy to ACCEPT
+      ansible.builtin.iptables:
+        chain: INPUT
+        policy: ACCEPT
+      when: cozystack_flush_iptables
+
+    - name: Enable iscsid service
+      ansible.builtin.systemd:
+        name: iscsid
+        enabled: true
+        state: started
+
+    - name: Enable multipathd service
+      ansible.builtin.systemd:
+        name: multipathd
+        enabled: true
+        state: started

@@ -1,0 +1,8 @@
+*.tar.gz
+.DS_Store
+*.retry
+.ansible/
+__pycache__/
+*.pyc
+FILES.json
+MANIFEST.json

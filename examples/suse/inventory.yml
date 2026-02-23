@@ -1,0 +1,37 @@
+---
+cluster:
+  children:
+    server:
+      hosts:
+        # Internal IP as host key, public IP as ansible_host
+        10.0.0.10:
+          ansible_host: 203.0.113.10
+    agent:
+      hosts:
+        10.0.0.11:
+          ansible_host: 203.0.113.11
+        10.0.0.12:
+          ansible_host: 203.0.113.12
+
+  vars:
+    ansible_port: 22
+    ansible_user: opensuse
+
+    # k3s configuration (used by k3s.orchestration)
+    k3s_version: v1.35.0+k3s3
+    token: "CHANGE_ME"
+    api_endpoint: "10.0.0.10"
+    cluster_context: my-cluster
+
+    # Cozystack configuration (REQUIRED)
+    cozystack_api_server_host: "10.0.0.10"
+
+    # Platform Package configuration
+    cozystack_root_host: "cozy.example.com"
+    cozystack_platform_variant: "isp-full-generic"
+
+    # Extra k3s flags (used in prepare-suse.yml)
+    cozystack_k3s_extra_args: "--tls-san=203.0.113.10"
+
+    # OCI: enable iptables flush (cloud images may block non-SSH traffic)
+    # cozystack_flush_iptables: true

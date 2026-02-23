@@ -1,0 +1,22 @@
+---
+# Prevent ansible-lint from auto-installing requirements.yml
+# (git commit hash versions crash ansible-galaxy's LooseVersion parser).
+# CI installs dependencies in a separate step before running lint.
+offline: true
+
+skip_list:
+  # All collection variables use cozystack_ prefix (collection namespace),
+  # not individual role prefixes.
+  - var-naming[no-role-prefix]
+
+# Roles inside the collection cannot be resolved by ansible-lint
+# during local development (known issue: ansible-lint#2487).
+mock_roles:
+  - cozystack.installer.cozystack
+
+# examples/*/site.yml imports external playbooks (k3s.orchestration.site)
+# that may not be installed during linting.
+exclude_paths:
+  - examples/ubuntu/site.yml
+  - examples/rhel/site.yml
+  - examples/suse/site.yml
