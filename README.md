@@ -187,14 +187,14 @@ Runs on `server[0]` only.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_chart_ref` | `oci://ghcr.io/cozystack/cozystack/cozy-installer` | Helm chart OCI reference |
-| `cozystack_chart_version` | `1.0.0-rc.1` | Helm chart version |
+| `cozystack_chart_version` | `1.0.2` | Helm chart version |
 | `cozystack_release_name` | `cozy-installer` | Helm release name |
 | `cozystack_namespace` | `cozy-system` | Namespace for operator and resources |
 | `cozystack_release_namespace` | `kube-system` | Namespace for Helm release secret |
 | `cozystack_operator_variant` | `generic` | Operator variant: generic, talos, hosted |
 | `cozystack_api_server_port` | `6443` | API server port |
 | `cozystack_kubeconfig` | `/etc/rancher/k3s/k3s.yaml` | Kubeconfig path on target |
-| `cozystack_helm_version` | `3.17.3` | Helm binary version to install |
+| `cozystack_helm_version` | `3.20.0` | Helm binary version to install |
 | `cozystack_helm_binary` | `/usr/local/bin/helm` | Path to Helm binary on target |
 | `cozystack_create_platform_package` | `true` | Create Platform Package CR after install |
 | `cozystack_platform_variant` | `isp-full-generic` | Platform variant: default, isp-full, isp-hosted, isp-full-generic |
