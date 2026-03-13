@@ -2,6 +2,13 @@
 cozystack.installer Release Notes
 ============================
 
+v1.1.2
+======
+
+Synced with Cozystack v1.1.2.
+
+- Bump ``cozystack_chart_version`` to ``1.1.2``
+
 v1.0.2
 ======
 
