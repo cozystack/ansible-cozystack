@@ -187,7 +187,7 @@ Runs on `server[0]` only.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_chart_ref` | `oci://ghcr.io/cozystack/cozystack/cozy-installer` | Helm chart OCI reference |
-| `cozystack_chart_version` | `1.0.2` | Helm chart version |
+| `cozystack_chart_version` | `1.1.2` | Helm chart version |
 | `cozystack_release_name` | `cozy-installer` | Helm release name |
 | `cozystack_namespace` | `cozy-system` | Namespace for operator and resources |
 | `cozystack_release_namespace` | `kube-system` | Namespace for Helm release secret |
