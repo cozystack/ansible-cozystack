@@ -29,11 +29,6 @@
       - { name: net.ipv4.conf.all.forwarding, value: "1" }
       - { name: vm.swappiness, value: "1" }
 
-    # Set to true on providers with restrictive iptables rules (OCI, etc.)
-    # WARNING: This flushes live iptables rules only (not persistent).
-    # Also stops firewalld to prevent rule restoration.
-    cozystack_flush_iptables: false
-
     # k3s server arguments required by Cozystack.
     # These disable built-in components that Cozystack replaces.
     cozystack_k3s_server_args: >-
@@ -46,10 +41,6 @@
       --flannel-backend=none
       --cluster-domain=cozy.local
       --kubelet-arg=max-pods=220
-
-    # Additional k3s server arguments (user-provided).
-    # Use for environment-specific flags like --tls-san.
-    cozystack_k3s_extra_args: ""
 
     # k3s server config YAML (CIDRs).
     cozystack_k3s_server_config_yaml: |
@@ -65,7 +56,7 @@
       ansible.builtin.set_fact:
         extra_server_args: >-
           {{ cozystack_k3s_server_args }}
-          {{ cozystack_k3s_extra_args }}
+          {{ cozystack_k3s_extra_args | default("") }}
       when: extra_server_args is not defined
 
     - name: Set k3s server config for Cozystack
@@ -93,20 +84,20 @@
         name: firewalld
         enabled: false
         state: stopped
-      when: cozystack_flush_iptables
+      when: cozystack_flush_iptables | default(false)
       failed_when: false
 
     - name: Flush iptables INPUT chain
       ansible.builtin.iptables:
         chain: INPUT
         flush: true
-      when: cozystack_flush_iptables
+      when: cozystack_flush_iptables | default(false)
 
     - name: Set iptables INPUT policy to ACCEPT
       ansible.builtin.iptables:
         chain: INPUT
         policy: ACCEPT
-      when: cozystack_flush_iptables
+      when: cozystack_flush_iptables | default(false)
 
     - name: Enable iscsid service
       ansible.builtin.systemd:

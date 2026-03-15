@@ -237,6 +237,16 @@ target node automatically. The `helm-diff` plugin enables true
 idempotency — repeated runs report no changes when the release is
 already up to date.
 
+### Customizing variables
+
+The example prepare playbooks define internal variables (like
+`cozystack_k3s_server_args`) in the play `vars` section. User-facing
+variables such as `cozystack_k3s_extra_args` and
+`cozystack_flush_iptables` should be set **in the inventory**, not in
+the playbook. Ansible play `vars` take precedence over inventory
+variables, so defining them in both places causes the inventory values
+to be silently ignored.
+
 ### Idempotency
 
 All tasks are idempotent. Running the playbook multiple times produces no changes if the state is already correct. The `--check` mode is supported.
