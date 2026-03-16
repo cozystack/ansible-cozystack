@@ -1,0 +1,13 @@
+---
+collections:
+  - name: ansible.posix
+  - name: community.general
+  - name: kubernetes.core
+  - name: k3s.orchestration
+    source: https://github.com/k3s-io/k3s-ansible.git
+    type: git
+    version: 1.1.0
+  - name: cozystack.installer
+    source: https://github.com/cozystack/ansible-cozystack.git
+    type: git
+    version: 1.1.2
