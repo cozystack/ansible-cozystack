@@ -10,5 +10,4 @@ collections:
   - name: cozystack.installer
     source: https://github.com/cozystack/ansible-cozystack.git
     type: git
-    # WARNING: never use 'main' in production — always pin to a release tag (e.g. v1.1.2)
-    version: main
+    version: 1.1.0

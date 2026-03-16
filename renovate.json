@@ -30,6 +30,22 @@
       ],
       "depNameTemplate": "ghcr.io/cozystack/cozystack/cozy-installer",
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)requirements\\.yml$/"],
+      "matchStrings": [
+        "source:\\s*https://github\\.com/cozystack/ansible-cozystack\\.git\\s+type:\\s*git\\s+version:\\s*(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "ghcr.io/cozystack/cozystack/cozy-installer",
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["ansible-galaxy"],
+      "matchPackageNames": ["cozystack.installer"],
+      "enabled": false
     }
   ]
 }
