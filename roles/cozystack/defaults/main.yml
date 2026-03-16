@@ -10,7 +10,7 @@
 cozystack_chart_ref: "oci://ghcr.io/cozystack/cozystack/cozy-installer"
 
 # Helm chart version (synced with Cozystack release)
-cozystack_chart_version: "1.1.2"
+cozystack_chart_version: "1.1.0"
 
 # Helm release name
 cozystack_release_name: "cozy-installer"
