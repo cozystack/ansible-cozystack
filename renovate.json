@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**"
+  ],
+  "platformAutomerge": true,
+  "automerge": true,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/roles/cozystack/defaults/main\\.yml$/"],
+      "matchStrings": [
+        "cozystack_chart_version:\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "ghcr.io/cozystack/cozystack/cozy-installer",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^galaxy\\.yml$/"],
+      "matchStrings": [
+        "version:\\s*(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "ghcr.io/cozystack/cozystack/cozy-installer",
+      "datasourceTemplate": "docker"
+    }
+  ]
+}
