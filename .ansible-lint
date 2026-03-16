@@ -1,6 +1,4 @@
 ---
-# Prevent ansible-lint from auto-installing requirements.yml
-# (git commit hash versions crash ansible-galaxy's LooseVersion parser).
 # CI installs dependencies in a separate step before running lint.
 offline: true
 
