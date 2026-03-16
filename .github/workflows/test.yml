@@ -85,7 +85,9 @@ jobs:
           ansible-galaxy collection install cozystack-installer-*.tar.gz --force
 
       - name: Install collection dependencies
-        run: ansible-galaxy collection install --requirements-file requirements.yml
+        run: |
+          ansible-galaxy collection install --requirements-file requirements.yml
+          ansible-galaxy collection install --requirements-file tests/requirements.yml
 
       - name: Run full pipeline
         run: >-

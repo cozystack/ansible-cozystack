@@ -2,7 +2,7 @@
 # Full pipeline: prepare Ubuntu/Debian nodes + deploy k3s + install Cozystack
 #
 # Prerequisites:
-#   ansible-galaxy collection install --requirements-file ../../requirements.yml
+#   ansible-galaxy collection install --requirements-file requirements.yml
 #
 # Usage:
 #   ansible-playbook site.yml
