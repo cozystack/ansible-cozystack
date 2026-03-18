@@ -9,23 +9,8 @@
       It must be the node's INTERNAL IP
       (visible on network interface, not public/NAT IP).
 
-- name: Compute master node IPs for kube-ovn
-  ansible.builtin.set_fact:
-    _cozystack_master_nodes: >-
-      {%- if cozystack_master_nodes | length > 0 -%}
-        {{ cozystack_master_nodes }}
-      {%- else -%}
-        {{ groups['server'] | join(',') }}
-      {%- endif -%}
-  when: cozystack_create_platform_package
-
-- name: Validate master node IPs
-  ansible.builtin.assert:
-    that:
-      - _cozystack_master_nodes | length > 0
-    fail_msg: >-
-      Could not determine master node IPs for kube-ovn.
-      Set cozystack_master_nodes explicitly in your inventory.
+- name: Compute and validate master node IPs for kube-ovn
+  ansible.builtin.include_tasks: compute-master-nodes.yml
   when: cozystack_create_platform_package
 
 - name: Set architecture for Helm download

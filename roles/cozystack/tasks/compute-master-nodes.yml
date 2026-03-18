@@ -1,0 +1,29 @@
+---
+# Compute and validate master node IPs for kube-ovn.
+# Included from main.yml and tests.
+- name: Compute master node IPs for kube-ovn
+  ansible.builtin.set_fact:
+    _cozystack_master_nodes: >-
+      {%- if cozystack_master_nodes | length > 0 -%}
+        {{ cozystack_master_nodes }}
+      {%- else -%}
+        {{ groups['server'] | join(',') }}
+      {%- endif -%}
+
+- name: Validate master node IPs are non-empty
+  ansible.builtin.assert:
+    that:
+      - _cozystack_master_nodes | length > 0
+    fail_msg: >-
+      Could not determine master node IPs for kube-ovn.
+      Set cozystack_master_nodes explicitly in your inventory.
+
+- name: Validate master node IPs are valid addresses
+  ansible.builtin.assert:
+    that:
+      - (item | ansible.utils.ipaddr) != false
+    fail_msg: >-
+      '{{ item }}' is not a valid IP address in MASTER_NODES.
+      Inventory host keys in the 'server' group must be IPs, not hostnames.
+      Alternatively, set cozystack_master_nodes explicitly.
+  loop: "{{ _cozystack_master_nodes.split(',') }}"

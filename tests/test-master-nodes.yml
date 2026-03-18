@@ -1,7 +1,8 @@
 ---
 # Verify that MASTER_NODES is correctly derived from the 'server'
 # inventory group in both single-master and multi-master setups.
-- name: Test MASTER_NODES computation and template rendering
+# Uses the actual role tasks (no duplicated Jinja2 logic).
+- name: Test MASTER_NODES auto-detection and template rendering
   hosts: server[0]
   gather_facts: false
   pre_tasks:
@@ -18,20 +19,9 @@
         cozystack_svc_cidr: "{{ cozystack_svc_cidr | default('10.43.0.0/16') }}"
         cozystack_join_cidr: "{{ cozystack_join_cidr | default('100.64.0.0/16') }}"
   tasks:
-    - name: Compute master node IPs for kube-ovn
-      ansible.builtin.set_fact:
-        _cozystack_master_nodes: >-
-          {%- if cozystack_master_nodes | length > 0 -%}
-            {{ cozystack_master_nodes }}
-          {%- else -%}
-            {{ groups['server'] | join(',') }}
-          {%- endif -%}
-
-    - name: Assert MASTER_NODES is non-empty
-      ansible.builtin.assert:
-        that:
-          - _cozystack_master_nodes | length > 0
-        fail_msg: "MASTER_NODES must not be empty, got '{{ _cozystack_master_nodes }}'."
+    - name: Include role master-node computation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/compute-master-nodes.yml"
 
     - name: Assert auto-detected MASTER_NODES matches server group
       ansible.builtin.assert:
@@ -89,14 +79,9 @@
       ansible.builtin.set_fact:
         cozystack_master_nodes: "192.168.1.1,192.168.1.2"
 
-    - name: Compute master node IPs with explicit override
-      ansible.builtin.set_fact:
-        _cozystack_master_nodes: >-
-          {%- if cozystack_master_nodes | length > 0 -%}
-            {{ cozystack_master_nodes }}
-          {%- else -%}
-            {{ groups['server'] | join(',') }}
-          {%- endif -%}
+    - name: Include role master-node computation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/compute-master-nodes.yml"
 
     - name: Assert explicit override is used
       ansible.builtin.assert:
