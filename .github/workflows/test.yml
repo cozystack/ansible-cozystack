@@ -99,13 +99,24 @@ jobs:
 
       - name: Test hostname host keys are rejected
         run: |
-          if ansible-playbook tests/test-master-nodes.yml \
-            --inventory tests/test-hostname-inventory.yml 2>&1; then
+          set +e
+          output="$(ansible-playbook tests/test-master-nodes.yml \
+            --inventory tests/test-hostname-inventory.yml 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
             echo "ERROR: Expected failure for hostname host keys, but playbook succeeded"
             exit 1
-          else
-            echo "OK: Hostname host keys correctly rejected"
           fi
+
+          if ! grep -q "not a valid IP address in MASTER_NODES" <<< "$output"; then
+            echo "ERROR: Playbook failed, but not due to hostname/IP validation"
+            echo "$output"
+            exit 1
+          fi
+
+          echo "OK: Hostname host keys correctly rejected"
 
   e2e:
     name: E2E
