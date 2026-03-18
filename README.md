@@ -203,6 +203,7 @@ Runs on `server[0]` only.
 | `cozystack_pod_gateway` | `10.42.0.1` | Pod gateway |
 | `cozystack_svc_cidr` | `10.43.0.0/16` | Service CIDR |
 | `cozystack_join_cidr` | `100.64.0.0/16` | Join CIDR |
+| `cozystack_master_nodes` | `""` (auto-detect) | Comma-separated control-plane node IPs for kube-ovn RAFT. Empty = auto-detect from `server` group |
 | `cozystack_operator_wait_timeout` | `300` | Timeout for operator/CRD readiness (seconds) |
 
 ## Using with k3s
@@ -228,6 +229,31 @@ or `examples/suse/`:
 ### apiServerHost must be the internal IP
 
 On cloud providers with NAT (OCI, AWS, GCP), nodes have internal IPs different from public IPs. KubeOVN validates the host IP against `NODE_IPS` and crashes if they don't match. Always use the IP visible on the node's network interface.
+
+### Multi-master setup (kube-ovn RAFT)
+
+Kube-ovn requires `MASTER_NODES` — a comma-separated list of all
+control-plane node IPs for OVN RAFT consensus. By default, the role
+auto-detects these IPs from the `server` inventory group host keys.
+
+This works when host keys are internal IPs (the recommended inventory
+pattern):
+
+```yaml
+server:
+  hosts:
+    10.0.0.10:
+      ansible_host: 203.0.113.10
+    10.0.0.11:
+      ansible_host: 203.0.113.11
+```
+
+If your inventory uses hostnames or non-IP host keys, set
+`cozystack_master_nodes` explicitly:
+
+```yaml
+cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
+```
 
 ### Automatic Helm installation
 

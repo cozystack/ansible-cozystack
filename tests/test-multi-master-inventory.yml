@@ -1,0 +1,33 @@
+---
+# Test inventory with three control-plane nodes.
+# Used to verify MASTER_NODES auto-detection from the 'server' group.
+cluster:
+  children:
+    server:
+      hosts:
+        10.0.0.10:
+          ansible_connection: local
+          ansible_host: 127.0.0.1
+        10.0.0.11:
+          ansible_connection: local
+          ansible_host: 127.0.0.1
+        10.0.0.12:
+          ansible_connection: local
+          ansible_host: 127.0.0.1
+    agent:
+      hosts: {}
+
+  vars:
+    ansible_user: runner
+
+    # Cozystack configuration
+    cozystack_api_server_host: "10.0.0.10"
+    cozystack_api_server_port: "6443"
+    cozystack_namespace: "cozy-system"
+    cozystack_platform_variant: "isp-full-generic"
+    cozystack_create_platform_package: true
+    cozystack_root_host: ""
+    cozystack_pod_cidr: "10.42.0.0/16"
+    cozystack_pod_gateway: "10.42.0.1"
+    cozystack_svc_cidr: "10.43.0.0/16"
+    cozystack_join_cidr: "100.64.0.0/16"

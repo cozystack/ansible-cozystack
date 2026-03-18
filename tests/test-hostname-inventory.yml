@@ -1,0 +1,16 @@
+---
+# Inventory with hostname host keys (NOT IPs).
+# Used to verify that IP validation correctly rejects hostnames.
+cluster:
+  children:
+    server:
+      hosts:
+        node1.example.com:
+          ansible_connection: local
+          ansible_host: 127.0.0.1
+    agent:
+      hosts: {}
+
+  vars:
+    ansible_user: runner
+    cozystack_api_server_host: "10.0.0.1"

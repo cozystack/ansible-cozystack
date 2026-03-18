@@ -9,6 +9,10 @@
       It must be the node's INTERNAL IP
       (visible on network interface, not public/NAT IP).
 
+- name: Compute and validate master node IPs for kube-ovn
+  ansible.builtin.include_tasks: compute-master-nodes.yml
+  when: cozystack_create_platform_package
+
 - name: Set architecture for Helm download
   ansible.builtin.set_fact:
     _cozystack_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"

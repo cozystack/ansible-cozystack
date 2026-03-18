@@ -16,7 +16,7 @@ spec:
             autoMount:
               enabled: true
         kube-ovn:
-          MASTER_NODES: {{ cozystack_api_server_host | to_json }}
+          MASTER_NODES: {{ _cozystack_master_nodes | to_json }}
     platform:
       values:
         networking:

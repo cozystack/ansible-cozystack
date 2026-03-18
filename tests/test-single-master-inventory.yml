@@ -1,0 +1,15 @@
+---
+# Single-master test inventory with IP as host key.
+# Tests auto-detection path (cozystack_master_nodes is NOT set).
+cluster:
+  children:
+    server:
+      hosts:
+        127.0.0.1:
+          ansible_connection: local
+    agent:
+      hosts: {}
+
+  vars:
+    ansible_user: runner
+    cozystack_api_server_host: "127.0.0.1"

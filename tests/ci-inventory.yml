@@ -21,6 +21,7 @@ cluster:
 
     # Cozystack configuration
     cozystack_api_server_host: "127.0.0.1"
+    cozystack_master_nodes: "127.0.0.1"
     cozystack_root_host: "cozy.ci-test.local"
     cozystack_platform_variant: "isp-full-generic"
 

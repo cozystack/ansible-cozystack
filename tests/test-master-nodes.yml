@@ -1,0 +1,92 @@
+---
+# Verify that MASTER_NODES is correctly derived from the 'server'
+# inventory group in both single-master and multi-master setups.
+# Uses the actual role tasks (no duplicated Jinja2 logic).
+- name: Test MASTER_NODES auto-detection and template rendering
+  hosts: server[0]
+  gather_facts: false
+  pre_tasks:
+    - name: Set template defaults when not defined by inventory
+      ansible.builtin.set_fact:
+        cozystack_master_nodes: "{{ cozystack_master_nodes | default('') }}"
+        cozystack_api_server_host: "{{ cozystack_api_server_host | default('127.0.0.1') }}"
+        cozystack_api_server_port: "{{ cozystack_api_server_port | default('6443') }}"
+        cozystack_namespace: "{{ cozystack_namespace | default('cozy-system') }}"
+        cozystack_platform_variant: "{{ cozystack_platform_variant | default('isp-full-generic') }}"
+        cozystack_root_host: "{{ cozystack_root_host | default('') }}"
+        cozystack_pod_cidr: "{{ cozystack_pod_cidr | default('10.42.0.0/16') }}"
+        cozystack_pod_gateway: "{{ cozystack_pod_gateway | default('10.42.0.1') }}"
+        cozystack_svc_cidr: "{{ cozystack_svc_cidr | default('10.43.0.0/16') }}"
+        cozystack_join_cidr: "{{ cozystack_join_cidr | default('100.64.0.0/16') }}"
+  tasks:
+    - name: Include role master-node computation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/compute-master-nodes.yml"
+
+    - name: Assert auto-detected MASTER_NODES matches server group
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_cozystack_master_nodes | split(',') | sort) ==
+            (groups['server'] | sort)
+        fail_msg: >-
+          Expected MASTER_NODES to match server group hosts.
+          Got '{{ _cozystack_master_nodes }}',
+          expected '{{ groups['server'] | join(',') }}'.
+      when: (cozystack_master_nodes | default('')) | length == 0
+
+    - name: Construct API server endpoint
+      ansible.builtin.set_fact:
+        _cozystack_api_endpoint: "https://{{ cozystack_api_server_host }}:{{ cozystack_api_server_port }}"
+
+    - name: Render Platform Package template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/cozystack/templates/platform-package.yml.j2"
+        dest: /tmp/cozystack-test-platform-package.yml
+        mode: "0600"
+
+    - name: Read rendered manifest
+      ansible.builtin.slurp:
+        src: /tmp/cozystack-test-platform-package.yml
+      register: _rendered_manifest
+
+    - name: Assert rendered MASTER_NODES contains all server IPs
+      ansible.builtin.assert:
+        that:
+          - "'MASTER_NODES' in _rendered_content"
+          - "(_cozystack_master_nodes | to_json) in _rendered_content"
+        fail_msg: >-
+          Rendered template does not contain expected MASTER_NODES value.
+          Expected {{ _cozystack_master_nodes | to_json }} in output.
+      vars:
+        _rendered_content: "{{ _rendered_manifest.content | b64decode }}"
+
+    - name: Show rendered MASTER_NODES (debug)
+      ansible.builtin.debug:
+        msg: "MASTER_NODES = {{ _cozystack_master_nodes }}"
+
+    - name: Clean up test manifest
+      ansible.builtin.file:
+        path: /tmp/cozystack-test-platform-package.yml
+        state: absent
+      changed_when: false
+
+- name: Test explicit cozystack_master_nodes override
+  hosts: server[0]
+  gather_facts: false
+  tasks:
+    - name: Set explicit master nodes override
+      ansible.builtin.set_fact:
+        cozystack_master_nodes: "192.168.1.1,192.168.1.2"
+
+    - name: Include role master-node computation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/compute-master-nodes.yml"
+
+    - name: Assert explicit override is used
+      ansible.builtin.assert:
+        that:
+          - _cozystack_master_nodes == "192.168.1.1,192.168.1.2"
+        fail_msg: >-
+          Expected explicit override '192.168.1.1,192.168.1.2',
+          got '{{ _cozystack_master_nodes }}'.
