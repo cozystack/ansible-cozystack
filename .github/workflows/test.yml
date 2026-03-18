@@ -64,6 +64,31 @@ jobs:
         working-directory: ansible_collections/cozystack/installer
         run: ansible-test sanity --color
 
+  master-nodes:
+    name: Multi-master MASTER_NODES
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Test auto-detection from server group (3 nodes)
+        run: >-
+          ansible-playbook tests/test-master-nodes.yml
+          --inventory tests/test-multi-master-inventory.yml
+
+      - name: Test single-node inventory
+        run: >-
+          ansible-playbook tests/test-master-nodes.yml
+          --inventory tests/ci-inventory.yml
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
