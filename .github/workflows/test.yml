@@ -76,15 +76,23 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install Ansible
-        run: pip install ansible-core
+      - name: Install Ansible and dependencies
+        run: pip install ansible-core netaddr
+
+      - name: Install required collections
+        run: ansible-galaxy collection install ansible.utils
 
       - name: Test auto-detection from server group (3 nodes)
         run: >-
           ansible-playbook tests/test-master-nodes.yml
           --inventory tests/test-multi-master-inventory.yml
 
-      - name: Test single-node inventory
+      - name: Test single-node auto-detection (IP host key)
+        run: >-
+          ansible-playbook tests/test-master-nodes.yml
+          --inventory tests/test-single-master-inventory.yml
+
+      - name: Test single-node explicit override (CI inventory)
         run: >-
           ansible-playbook tests/test-master-nodes.yml
           --inventory tests/ci-inventory.yml
