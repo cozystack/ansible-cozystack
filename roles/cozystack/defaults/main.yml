@@ -53,6 +53,10 @@ cozystack_platform_variant: "isp-full-generic"
 # Leave empty to skip publishing config in the Platform Package
 cozystack_root_host: ""
 
+# Comma-separated control-plane node IPs for kube-ovn RAFT consensus.
+# Empty = auto-detect from 'server' inventory group host keys.
+cozystack_master_nodes: ""
+
 # Network CIDRs for the Platform Package (defaults match k3s)
 cozystack_pod_cidr: "10.42.0.0/16"
 cozystack_pod_gateway: "10.42.0.1"
