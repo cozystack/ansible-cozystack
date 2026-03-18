@@ -7,7 +7,7 @@
       {%- if cozystack_master_nodes | length > 0 -%}
         {{ cozystack_master_nodes }}
       {%- else -%}
-        {{ groups['server'] | join(',') }}
+        {{ groups.get('server', []) | join(',') }}
       {%- endif -%}
 
 - name: Validate master node IPs are non-empty
