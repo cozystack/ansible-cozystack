@@ -119,8 +119,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install Ansible
-        run: pip install ansible-core
+      - name: Install Ansible and dependencies
+        run: pip install ansible-core netaddr
 
       - name: Build and install collection
         run: |
