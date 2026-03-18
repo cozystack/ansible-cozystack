@@ -3,15 +3,18 @@ cluster:
   children:
     server:
       hosts:
-        # Internal IP as host key, public IP as ansible_host
+        # Internal IP as host key, public IP as ansible_host.
+        # All server host keys are auto-collected as kube-ovn MASTER_NODES.
         10.0.0.10:
           ansible_host: 203.0.113.10
-    agent:
-      hosts:
         10.0.0.11:
           ansible_host: 203.0.113.11
         10.0.0.12:
           ansible_host: 203.0.113.12
+    agent:
+      hosts:
+        10.0.0.20:
+          ansible_host: 203.0.113.20
 
   vars:
     ansible_port: 22
@@ -25,6 +28,10 @@ cluster:
 
     # Cozystack configuration (REQUIRED)
     cozystack_api_server_host: "10.0.0.10"
+
+    # kube-ovn master nodes (auto-detected from 'server' group host keys).
+    # Override only if host keys are not internal IPs.
+    # cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
 
     # Platform Package configuration
     cozystack_root_host: "cozy.example.com"
