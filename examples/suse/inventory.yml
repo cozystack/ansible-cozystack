@@ -18,6 +18,7 @@ cluster:
     ansible_user: opensuse
 
     # k3s configuration (used by k3s.orchestration)
+    # renovate: datasource=github-releases depName=k3s-io/k3s
     k3s_version: v1.35.0+k3s3
     token: "CHANGE_ME"
     api_endpoint: "10.0.0.10"

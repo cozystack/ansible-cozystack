@@ -15,7 +15,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/roles/cozystack/defaults/main\\.yml$/"],
+      "fileMatch": ["/roles/cozystack/defaults/main\\.yml$/"],
       "matchStrings": [
         "cozystack_chart_version:\\s*\"(?<currentValue>[^\"]+)\""
       ],
@@ -24,7 +24,7 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^galaxy\\.yml$/"],
+      "fileMatch": ["/^galaxy\\.yml$/"],
       "matchStrings": [
         "version:\\s*(?<currentValue>\\S+)"
       ],
@@ -33,12 +33,19 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/(^|/)requirements\\.yml$/"],
+      "fileMatch": ["/(^|/)requirements\\.yml$/"],
       "matchStrings": [
         "source:\\s*https://github\\.com/cozystack/ansible-cozystack\\.git\\s+type:\\s*git\\s+version:\\s*(?<currentValue>\\S+)"
       ],
       "depNameTemplate": "ghcr.io/cozystack/cozystack/cozy-installer",
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["inventory\\.yml$", "ci-inventory\\.yml$"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>[^\\s]+)\\s+depName=(?<depName>[^\\s]+)[\\s\\S]*?k3s_version:\\s*(?<currentValue>[^\\s]+)"
+      ]
     }
   ],
   "packageRules": [
