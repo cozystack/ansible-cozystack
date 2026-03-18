@@ -16,6 +16,7 @@ homepage: https://cozystack.io
 documentation: https://cozystack.io/docs
 dependencies:
   ansible.posix: ">=1.0.0"
+  ansible.utils: ">=2.0.0"
   kubernetes.core: ">=5.0.0"
 tags:
   - infrastructure
