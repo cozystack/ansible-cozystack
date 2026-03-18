@@ -15,7 +15,7 @@ cluster:
 
     # k3s configuration
     # renovate: datasource=github-releases depName=k3s-io/k3s
-    k3s_version: v1.35.0+k3s3
+    k3s_version: v1.35.2+k3s1
     token: "ci-test-token"
     api_endpoint: "127.0.0.1"
     cluster_context: ci-test
