@@ -97,6 +97,16 @@ jobs:
           ansible-playbook tests/test-master-nodes.yml
           --inventory tests/ci-inventory.yml
 
+      - name: Test hostname host keys are rejected
+        run: |
+          if ansible-playbook tests/test-master-nodes.yml \
+            --inventory tests/test-hostname-inventory.yml 2>&1; then
+            echo "ERROR: Expected failure for hostname host keys, but playbook succeeded"
+            exit 1
+          else
+            echo "OK: Hostname host keys correctly rejected"
+          fi
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
