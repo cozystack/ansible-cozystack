@@ -15,7 +15,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["/roles/cozystack/defaults/main\\.yml$/"],
+      "fileMatch": ["roles/cozystack/defaults/main\\.yml$"],
       "matchStrings": [
         "cozystack_chart_version:\\s*\"(?<currentValue>[^\"]+)\""
       ],
@@ -24,7 +24,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["/^galaxy\\.yml$/"],
+      "fileMatch": ["^galaxy\\.yml$"],
       "matchStrings": [
         "version:\\s*(?<currentValue>\\S+)"
       ],
@@ -33,7 +33,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["/(^|/)requirements\\.yml$/"],
+      "fileMatch": ["(^|/)requirements\\.yml$"],
       "matchStrings": [
         "source:\\s*https://github\\.com/cozystack/ansible-cozystack\\.git\\s+type:\\s*git\\s+version:\\s*(?<currentValue>\\S+)"
       ],
