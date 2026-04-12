@@ -38,11 +38,13 @@
     # userspace packages are installed.
 
     # OBS 'filesystems' repo path segment. OBS uses canonical distribution
-    # names (openSUSE_Leap_15.6, openSUSE_Tumbleweed, SLE_15_SP6) as
+    # names (openSUSE_Leap_15.6, openSUSE_Tumbleweed, SLE_15, SLE_15_SP6) as
     # subdirectories, NOT bare version numbers. Auto-detected from the
-    # distribution fact; override only for unusual installs. For SLE the
-    # path is constructed as SLE_<major>_SP<minor>; SLE GA (no SP) is
-    # represented as "15.0" by Ansible facts, so split('.')[1] is safe.
+    # distribution fact; override only for unusual installs.
+    #
+    # SLE quirk: GA releases use SLE_<major> (no SP suffix), service packs
+    # use SLE_<major>_SP<minor>. Ansible reports SLE GA as either '15' or
+    # '15.0' depending on facts cache; treat both as GA.
     cozystack_zfs_obs_path: >-
       {%- set _parts = ansible_distribution_version.split('.') -%}
       {%- set _major = _parts[0] -%}
@@ -51,6 +53,8 @@
       openSUSE_Leap_{{ ansible_distribution_version }}
       {%- elif ansible_distribution == 'openSUSE Tumbleweed' -%}
       openSUSE_Tumbleweed
+      {%- elif _minor == '0' -%}
+      SLE_{{ _major }}
       {%- else -%}
       SLE_{{ _major }}_SP{{ _minor }}
       {%- endif -%}
@@ -231,8 +235,20 @@
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
+      register: _cozystack_zfs_modprobe
       when: cozystack_enable_zfs | default(true)
-      failed_when: false  # Secure Boot / unsigned module environments
+      failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
+
+    - name: Warn if ZFS module failed to load
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: modprobe zfs failed ({{ _cozystack_zfs_modprobe.msg | default('unknown') }}).
+          LINSTOR ZFS backend will not work until this is resolved.
+          Set cozystack_enable_zfs: false to silence.
+      when:
+        - cozystack_enable_zfs | default(true)
+        - _cozystack_zfs_modprobe is defined
+        - _cozystack_zfs_modprobe.failed | default(false)
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
@@ -247,13 +263,19 @@
           kvm_amd
       when: cozystack_enable_kubevirt | default(true)
 
-    - name: Load KubeVirt kernel modules now
+    - name: Load required KubeVirt kernel modules now
       community.general.modprobe:
         name: "{{ item }}"
       loop:
         - vhost_net
         - tun
+      when: cozystack_enable_kubevirt | default(true)
+
+    - name: Load CPU-vendor KVM module now
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop:
         - kvm_intel
         - kvm_amd
-      failed_when: false  # only one of kvm_intel/kvm_amd succeeds per CPU vendor
+      failed_when: false  # only one matches the host CPU
       when: cozystack_enable_kubevirt | default(true)

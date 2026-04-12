@@ -239,10 +239,23 @@
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
+      register: _cozystack_zfs_modprobe
       when:
         - cozystack_enable_zfs | default(true)
         - ansible_distribution == 'Ubuntu'
-      failed_when: false  # Secure Boot / unsigned module environments
+      failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
+
+    - name: Warn if ZFS module failed to load
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: modprobe zfs failed ({{ _cozystack_zfs_modprobe.msg | default('unknown') }}).
+          LINSTOR ZFS backend will not work until this is resolved.
+          Set cozystack_enable_zfs: false to silence.
+      when:
+        - cozystack_enable_zfs | default(true)
+        - ansible_distribution == 'Ubuntu'
+        - _cozystack_zfs_modprobe is defined
+        - _cozystack_zfs_modprobe.failed | default(false)
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
@@ -259,13 +272,19 @@
           kvm_amd
       when: cozystack_enable_kubevirt | default(true)
 
-    - name: Load KubeVirt kernel modules now
+    - name: Load required KubeVirt kernel modules now
       community.general.modprobe:
         name: "{{ item }}"
       loop:
         - vhost_net
         - tun
+      when: cozystack_enable_kubevirt | default(true)
+
+    - name: Load CPU-vendor KVM module now
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop:
         - kvm_intel
         - kvm_amd
-      failed_when: false  # only one of kvm_intel/kvm_amd succeeds per CPU vendor
+      failed_when: false  # only one matches the host CPU
       when: cozystack_enable_kubevirt | default(true)

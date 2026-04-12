@@ -128,7 +128,7 @@ The `openvswitch` kernel module is in the upstream kernel since 3.3; no OVS user
 | Distribution | Package | Repo |
 | --- | --- | --- |
 | Ubuntu 22.04 / 24.04 | `zfsutils-linux` | Default repos (kernel module ships in `linux-modules-extra-*`) |
-| Debian 12+ | `zfsutils-linux` | `contrib` component — prepare playbook enables it automatically when ZFS is requested |
+| Debian 12+ | `zfsutils-linux` + `zfs-dkms` | Not automated by the example. Enable `contrib`, install manually, or set `cozystack_enable_zfs: false`. |
 | RHEL 9 / Rocky 9 / Alma 9 | `zfs` | OpenZFS release RPM — prepare playbook installs it automatically |
 | openSUSE Leap 15.6 | `zfs` | OBS `filesystems` repo — prepare playbook adds it automatically |
 
