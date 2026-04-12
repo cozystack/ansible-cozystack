@@ -59,6 +59,7 @@
       SLE_{{ _major }}_SP{{ _minor }}
       {%- endif -%}
     cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/filesystems.repo"
+    cozystack_zfs_obs_gpg_key: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/repodata/repomd.xml.key"
 
     # overlay is usually built into the kernel, not a loadable module;
     # modprobe is allowed to fail when that's the case.
@@ -211,11 +212,28 @@
         enabled: true
         state: started
 
-    # ZFS backend for LINSTOR (opt-out via cozystack_enable_zfs=false)
+    # ZFS backend for LINSTOR.
+    # Import the OBS filesystems signing key explicitly (rather than
+    # auto_import_keys: true) so the key source is visible in the
+    # playbook and can be audited.
+    - name: Download OBS filesystems signing key
+      ansible.builtin.get_url:
+        url: "{{ cozystack_zfs_obs_gpg_key }}"
+        dest: /etc/pki/trust/anchors/obs-filesystems.key
+        mode: "0644"
+      register: _cozystack_obs_key
+      when: cozystack_enable_zfs | default(true)
+
+    - name: Import OBS filesystems signing key
+      ansible.builtin.command: rpm --import {{ _cozystack_obs_key.dest }}
+      changed_when: _cozystack_obs_key is changed
+      when:
+        - cozystack_enable_zfs | default(true)
+        - _cozystack_obs_key is defined
+
     - name: Add OBS filesystems repository for ZFS
       community.general.zypper_repository:
         repo: "{{ cozystack_zfs_obs_repo }}"
-        auto_import_keys: true
         state: present
       when: cozystack_enable_zfs | default(true)
 
@@ -225,19 +243,24 @@
         state: present
       when: cozystack_enable_zfs | default(true)
 
-    - name: Load ZFS kernel module at boot
-      ansible.builtin.copy:
-        dest: /etc/modules-load.d/cozystack-zfs.conf
-        mode: "0644"
-        content: "zfs\n"
-      when: cozystack_enable_zfs | default(true)
-
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
       register: _cozystack_zfs_modprobe
       when: cozystack_enable_zfs | default(true)
       failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
+
+    # Only persist zfs in modules-load.d if the module actually loaded —
+    # otherwise systemd-modules-load.service will fail on every boot.
+    - name: Load ZFS kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-zfs.conf
+        mode: "0644"
+        content: "zfs\n"
+      when:
+        - cozystack_enable_zfs | default(true)
+        - _cozystack_zfs_modprobe is defined
+        - not _cozystack_zfs_modprobe.failed | default(false)
 
     - name: Warn if ZFS module failed to load
       ansible.builtin.debug:
@@ -252,6 +275,17 @@
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
+    - name: Detect CPU vendor for KVM module selection
+      ansible.builtin.set_fact:
+        _cozystack_kvm_module: >-
+          {%- if 'GenuineIntel' in (ansible_processor | join(' ')) -%}
+          kvm_intel
+          {%- elif 'AuthenticAMD' in (ansible_processor | join(' ')) -%}
+          kvm_amd
+          {%- else -%}
+          {%- endif -%}
+      when: cozystack_enable_kubevirt | default(true)
+
     - name: Load KubeVirt kernel modules at boot
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack-kubevirt.conf
@@ -259,9 +293,10 @@
         content: |
           vhost_net
           tun
-          kvm_intel
-          kvm_amd
-      when: cozystack_enable_kubevirt | default(true)
+          {{ _cozystack_kvm_module }}
+      when:
+        - cozystack_enable_kubevirt | default(true)
+        - _cozystack_kvm_module | length > 0
 
     - name: Load required KubeVirt kernel modules now
       community.general.modprobe:
@@ -273,9 +308,8 @@
 
     - name: Load CPU-vendor KVM module now
       community.general.modprobe:
-        name: "{{ item }}"
-      loop:
-        - kvm_intel
-        - kvm_amd
-      failed_when: false  # only one matches the host CPU
-      when: cozystack_enable_kubevirt | default(true)
+        name: "{{ _cozystack_kvm_module }}"
+      when:
+        - cozystack_enable_kubevirt | default(true)
+        - _cozystack_kvm_module | length > 0
+      failed_when: false  # unsupported CPU / virtualization disabled in BIOS

@@ -128,9 +128,8 @@ The `openvswitch` kernel module is in the upstream kernel since 3.3; no OVS user
 | Distribution | Package | Repo |
 | --- | --- | --- |
 | Ubuntu 22.04 / 24.04 | `zfsutils-linux` | Default repos (kernel module ships in `linux-modules-extra-*`) |
-| Debian 12+ | `zfsutils-linux` + `zfs-dkms` | Not automated by the example. Enable `contrib`, install manually, or set `cozystack_enable_zfs: false`. |
-| RHEL 9 / Rocky 9 / Alma 9 | `zfs` | OpenZFS release RPM — prepare playbook installs it automatically |
-| openSUSE Leap 15.6 | `zfs` | OBS `filesystems` repo — prepare playbook adds it automatically |
+| RHEL 9 / Rocky 9 / Alma 9 | `zfs` | OpenZFS release RPM — prepare playbook imports the GPG key and installs it automatically |
+| openSUSE Leap 15.6 / SLE 15 | `zfs` | OBS `filesystems` repo — prepare playbook imports the repo key and adds it automatically |
 
 #### Enabled by default: KubeVirt virtualization
 
@@ -138,16 +137,13 @@ The `openvswitch` kernel module is in the upstream kernel since 3.3; no OVS user
 
 > **No host userspace packages are installed.** KubeVirt bundles QEMU and libvirt in its own pods. Only the kernel modules listed below are loaded on the host.
 
-Loaded via `/etc/modules-load.d/cozystack-kubevirt.conf`:
+Loaded via `/etc/modules-load.d/cozystack-kubevirt.conf`. The prepare playbook detects the CPU vendor (via `ansible_processor`) and writes only the matching `kvm_*` module so `systemd-modules-load` does not report a failure at boot:
 
 ```text
 vhost_net
 tun
-kvm_intel
-kvm_amd
+kvm_intel  # or kvm_amd depending on the CPU
 ```
-
-Both `kvm_intel` and `kvm_amd` are listed so the correct module loads on any CPU; the mismatched one produces a single harmless `systemd-modules-load` log line at boot.
 
 #### Recommended: BPF filesystem mount for Cilium
 
