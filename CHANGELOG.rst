@@ -9,9 +9,12 @@ Node prerequisites: comprehensive audit and install in examples.
 
 - Example prepare playbooks now install the full set of node prerequisites.
   Base additions: ``lvm2``, ``thin-provisioning-tools`` /
-  ``device-mapper-persistent-data``, and kernel headers
-  (``linux-headers-{{ ansible_kernel }}`` on Ubuntu/Debian, ``kernel-devel``
-  on RHEL, ``kernel-default-devel`` on openSUSE).
+  ``device-mapper-persistent-data``, and kernel headers pinned to the
+  running kernel (``linux-headers-{{ ansible_kernel }}`` on Ubuntu/Debian,
+  ``kernel-devel-{{ ansible_kernel }}`` on RHEL,
+  ``kernel-default-devel-{{ ansible_kernel }}`` on openSUSE). On Ubuntu
+  the playbook also installs ``linux-modules-extra-{{ ansible_kernel }}``
+  which provides ``openvswitch`` and ``geneve`` on cloud/minimal kernels.
 - Kernel modules for containerd, Kubernetes bridge networking, and Kube-OVN
   loaded via ``/etc/modules-load.d/cozystack.conf``: ``overlay``,
   ``br_netfilter``, ``openvswitch``, ``geneve``, ``ip_tables``, ``iptable_nat``.
@@ -20,11 +23,13 @@ Node prerequisites: comprehensive audit and install in examples.
 - Critical fix: ``multipathd`` DRBD device blacklist at
   ``/etc/multipath/conf.d/cozystack-drbd-blacklist.conf``. Without it
   LINSTOR volumes become inaccessible after node reboot.
-- New opt-out variable ``cozystack_enable_zfs`` (default ``true``) installs
-  ``zfsutils-linux`` on Ubuntu. RHEL prepare playbook imports the OpenZFS
-  GPG key and installs the release RPM; openSUSE prepare playbook auto-adds
-  the OBS ``filesystems`` repo using the canonical ``openSUSE_Leap_<ver>``
-  path segment. Persists the ``zfs`` module via ``/etc/modules-load.d/``.
+- New opt-out variable ``cozystack_enable_zfs`` (default ``true``).
+  Ubuntu installs ``zfsutils-linux`` from the main repo. RHEL imports the
+  OpenZFS GPG key and installs the release RPM before installing ``zfs``.
+  openSUSE adds the OBS ``filesystems`` repo with a distro-detected path
+  segment (Leap / Tumbleweed / SLE). Debian is not automated — contrib +
+  zfs-dkms must be installed manually. Persists the ``zfs`` module via
+  ``/etc/modules-load.d/``.
 - New opt-out variable ``cozystack_enable_kubevirt`` (default ``true``) loads
   ``vhost_net``, ``tun``, and ``kvm_intel``/``kvm_amd`` kernel modules.
   QEMU and libvirt are bundled in KubeVirt pods; no host userspace packages

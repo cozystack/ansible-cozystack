@@ -23,9 +23,16 @@
       # RUNNING kernel, not the latest staged one, so pin to ansible_kernel.
       - "kernel-devel-{{ ansible_kernel }}"
 
-    # Enable ZFS backend for LINSTOR. On RHEL ZFS is not in default repos;
-    # the task below adds the OpenZFS release RPM before installing.
-    cozystack_enable_zfs: true
+    # Opt-out toggles: cozystack_enable_zfs and cozystack_enable_kubevirt
+    # (both default to true). Override from inventory to skip. They are
+    # intentionally not defined here so inventory vars can take effect.
+    #
+    # ZFS: not in RHEL default repos; the tasks below import the OpenZFS
+    # GPG key and install the release RPM before installing zfs.
+    #
+    # KubeVirt: loads vhost_net, tun, and kvm_intel or kvm_amd kernel
+    # modules. QEMU and libvirt run inside KubeVirt pods, so no host
+    # userspace packages are installed.
 
     # URL to the OpenZFS release RPM. OpenZFS rotates this periodically;
     # adjust version when upstream publishes a new release RPM.
@@ -34,11 +41,6 @@
     # OpenZFS project GPG key, imported before installing the release RPM
     # to avoid disabling GPG verification.
     cozystack_zfs_gpg_key_url: "https://raw.githubusercontent.com/zfsonlinux/zfsonlinux.github.com/master/zfs-release/RPM-GPG-KEY-openzfs-key2"
-
-    # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
-    # kvm_amd kernel modules. QEMU and libvirt run inside KubeVirt pods, so
-    # no host userspace packages are installed.
-    cozystack_enable_kubevirt: true
 
     # overlay is usually built into the kernel, not a loadable module;
     # modprobe is allowed to fail when that's the case.
@@ -196,31 +198,31 @@
       ansible.builtin.rpm_key:
         key: "{{ cozystack_zfs_gpg_key_url }}"
         state: present
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Install OpenZFS release RPM
       ansible.builtin.dnf:
         name: "{{ cozystack_zfs_release_rpm }}"
         state: present
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Install ZFS packages
       ansible.builtin.dnf:
         name: zfs
         state: present
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Load ZFS kernel module at boot
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack-zfs.conf
         mode: "0644"
         content: "zfs\n"
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
       failed_when: false  # Secure Boot / unsigned module environments
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
@@ -234,7 +236,7 @@
           tun
           kvm_intel
           kvm_amd
-      when: cozystack_enable_kubevirt
+      when: cozystack_enable_kubevirt | default(true)
 
     - name: Load KubeVirt kernel modules now
       community.general.modprobe:
@@ -245,4 +247,4 @@
         - kvm_intel
         - kvm_amd
       failed_when: false  # only one of kvm_intel/kvm_amd succeeds per CPU vendor
-      when: cozystack_enable_kubevirt
+      when: cozystack_enable_kubevirt | default(true)

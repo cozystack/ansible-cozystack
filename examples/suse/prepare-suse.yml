@@ -26,28 +26,35 @@
       # RUNNING kernel, not the latest staged one, so pin to ansible_kernel.
       - "kernel-default-devel-{{ ansible_kernel }}"
 
-    # Enable ZFS backend for LINSTOR. On openSUSE ZFS is not in default repos;
-    # the task below adds the OBS 'filesystems' repo before installing.
-    cozystack_enable_zfs: true
+    # Opt-out toggles: cozystack_enable_zfs and cozystack_enable_kubevirt
+    # (both default to true). Override from inventory to skip. They are
+    # intentionally not defined here so inventory vars can take effect.
+    #
+    # ZFS: not in openSUSE default repos; the tasks below add the OBS
+    # 'filesystems' repo before installing.
+    #
+    # KubeVirt: loads vhost_net, tun, and kvm_intel or kvm_amd kernel
+    # modules. QEMU and libvirt run inside KubeVirt pods, so no host
+    # userspace packages are installed.
 
     # OBS 'filesystems' repo path segment. OBS uses canonical distribution
     # names (openSUSE_Leap_15.6, openSUSE_Tumbleweed, SLE_15_SP6) as
     # subdirectories, NOT bare version numbers. Auto-detected from the
-    # distribution fact; override only for unusual installs.
+    # distribution fact; override only for unusual installs. For SLE the
+    # path is constructed as SLE_<major>_SP<minor>; SLE GA (no SP) is
+    # represented as "15.0" by Ansible facts, so split('.')[1] is safe.
     cozystack_zfs_obs_path: >-
+      {%- set _parts = ansible_distribution_version.split('.') -%}
+      {%- set _major = _parts[0] -%}
+      {%- set _minor = _parts[1] if _parts | length > 1 else '0' -%}
       {%- if ansible_distribution == 'openSUSE Leap' -%}
       openSUSE_Leap_{{ ansible_distribution_version }}
       {%- elif ansible_distribution == 'openSUSE Tumbleweed' -%}
       openSUSE_Tumbleweed
       {%- else -%}
-      SLE_{{ ansible_distribution_version.split('.')[0] }}_SP{{ ansible_distribution_version.split('.')[1] }}
+      SLE_{{ _major }}_SP{{ _minor }}
       {%- endif -%}
     cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/filesystems.repo"
-
-    # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
-    # kvm_amd kernel modules. QEMU and libvirt run inside KubeVirt pods, so
-    # no host userspace packages are installed.
-    cozystack_enable_kubevirt: true
 
     # overlay is usually built into the kernel, not a loadable module;
     # modprobe is allowed to fail when that's the case.
@@ -206,25 +213,25 @@
         repo: "{{ cozystack_zfs_obs_repo }}"
         auto_import_keys: true
         state: present
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Install ZFS packages
       community.general.zypper:
         name: zfs
         state: present
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Load ZFS kernel module at boot
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack-zfs.conf
         mode: "0644"
         content: "zfs\n"
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
 
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
-      when: cozystack_enable_zfs
+      when: cozystack_enable_zfs | default(true)
       failed_when: false  # Secure Boot / unsigned module environments
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
@@ -238,7 +245,7 @@
           tun
           kvm_intel
           kvm_amd
-      when: cozystack_enable_kubevirt
+      when: cozystack_enable_kubevirt | default(true)
 
     - name: Load KubeVirt kernel modules now
       community.general.modprobe:
@@ -249,4 +256,4 @@
         - kvm_intel
         - kvm_amd
       failed_when: false  # only one of kvm_intel/kvm_amd succeeds per CPU vendor
-      when: cozystack_enable_kubevirt
+      when: cozystack_enable_kubevirt | default(true)

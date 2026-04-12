@@ -32,15 +32,20 @@
     # on Ubuntu.
     cozystack_ubuntu_modules_extra: "linux-modules-extra-{{ ansible_kernel }}"
 
-    # Enable ZFS backend for LINSTOR. Installs zfsutils-linux and loads the
-    # zfs kernel module. Ubuntu 22.04+ ships the ZFS kernel module in
-    # linux-modules-extra-* (pulled in automatically).
-    cozystack_enable_zfs: true
-
-    # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
-    # kvm_amd kernel modules. QEMU and libvirt run inside KubeVirt pods, so
-    # no host userspace packages are installed.
-    cozystack_enable_kubevirt: true
+    # Opt-out toggles are intentionally not defined here so they can be
+    # overridden from inventory. Each task references them via
+    # `| default(true)`. Set cozystack_enable_zfs: false or
+    # cozystack_enable_kubevirt: false in your inventory to skip.
+    #
+    # ZFS: installs zfsutils-linux. Ubuntu 22.04+ ships the ZFS kernel
+    # module via linux-modules-extra-* (pulled in above). On Debian
+    # zfsutils-linux is in contrib AND the kernel module requires
+    # zfs-dkms; this example does not automate Debian ZFS — set
+    # cozystack_enable_zfs: false and install manually.
+    #
+    # KubeVirt: loads vhost_net, tun, and kvm_intel or kvm_amd kernel
+    # modules. QEMU and libvirt run inside KubeVirt pods, so no host
+    # userspace packages are installed.
 
     # overlay is usually built into the kernel, not a loadable module;
     # modprobe is allowed to fail when that's the case.
@@ -199,35 +204,44 @@
         enabled: true
         state: started
 
-    # ZFS backend for LINSTOR (opt-out via cozystack_enable_zfs=false).
-    # On Debian zfsutils-linux lives in the 'contrib' component, which is
-    # disabled by default. Enable it only when ZFS is requested.
-    - name: Enable Debian contrib component for ZFS
-      ansible.builtin.apt_repository:
-        repo: "deb http://deb.debian.org/debian {{ ansible_distribution_release }} main contrib"
-        state: present
-        update_cache: true
+    # ZFS backend for LINSTOR (Ubuntu only).
+    # Debian needs manual contrib + zfs-dkms setup because (a) adding the
+    # contrib component via apt_repository conflicts with deb822 Signed-By
+    # in Debian 12+ sources, and (b) zfsutils-linux alone does not provide
+    # zfs.ko on stock Debian kernels.
+    - name: Warn when ZFS is requested on Debian
+      ansible.builtin.debug:
+        msg: >-
+          ZFS automation is not provided for Debian. Install zfsutils-linux
+          and zfs-dkms from contrib manually, or set cozystack_enable_zfs:
+          false in your inventory to silence this notice.
       when:
-        - cozystack_enable_zfs
+        - cozystack_enable_zfs | default(true)
         - ansible_distribution == 'Debian'
 
     - name: Install ZFS userspace tools
       ansible.builtin.apt:
         name: zfsutils-linux
         state: present
-      when: cozystack_enable_zfs
+      when:
+        - cozystack_enable_zfs | default(true)
+        - ansible_distribution == 'Ubuntu'
 
     - name: Load ZFS kernel module at boot
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack-zfs.conf
         mode: "0644"
         content: "zfs\n"
-      when: cozystack_enable_zfs
+      when:
+        - cozystack_enable_zfs | default(true)
+        - ansible_distribution == 'Ubuntu'
 
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
-      when: cozystack_enable_zfs
+      when:
+        - cozystack_enable_zfs | default(true)
+        - ansible_distribution == 'Ubuntu'
       failed_when: false  # Secure Boot / unsigned module environments
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
@@ -243,7 +257,7 @@
           tun
           kvm_intel
           kvm_amd
-      when: cozystack_enable_kubevirt
+      when: cozystack_enable_kubevirt | default(true)
 
     - name: Load KubeVirt kernel modules now
       community.general.modprobe:
@@ -254,4 +268,4 @@
         - kvm_intel
         - kvm_amd
       failed_when: false  # only one of kvm_intel/kvm_amd succeeds per CPU vendor
-      when: cozystack_enable_kubevirt
+      when: cozystack_enable_kubevirt | default(true)

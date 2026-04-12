@@ -143,9 +143,11 @@ Loaded via `/etc/modules-load.d/cozystack-kubevirt.conf`:
 ```text
 vhost_net
 tun
+kvm_intel
+kvm_amd
 ```
 
-Plus `kvm_intel` or `kvm_amd` at runtime (auto-detected — the prepare playbook attempts both, only the one matching the CPU succeeds).
+Both `kvm_intel` and `kvm_amd` are listed so the correct module loads on any CPU; the mismatched one produces a single harmless `systemd-modules-load` log line at boot.
 
 #### Recommended: BPF filesystem mount for Cilium
 
@@ -303,6 +305,12 @@ Runs on `server[0]` only.
 | `cozystack_join_cidr` | `100.64.0.0/16` | Join CIDR |
 | `cozystack_master_nodes` | `""` (auto-detect) | Comma-separated control-plane node IPs for kube-ovn RAFT. Empty = auto-detect from `server` group |
 | `cozystack_operator_wait_timeout` | `300` | Timeout for operator/CRD readiness (seconds) |
+| `cozystack_enable_zfs` | `true` | Example playbook: install ZFS userspace + load module. Set `false` to skip. |
+| `cozystack_enable_kubevirt` | `true` | Example playbook: load KubeVirt kernel modules. Set `false` to skip. |
+
+`cozystack_enable_zfs` and `cozystack_enable_kubevirt` are consumed by the
+example prepare playbooks and are safe to set from inventory host/group
+vars to opt out.
 
 ## Using with k3s
 
