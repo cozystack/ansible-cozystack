@@ -76,11 +76,13 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install Ansible and dependencies
-        run: pip install ansible-core netaddr
+      - name: Install Ansible
+        run: pip install ansible-core
 
-      - name: Install required collections
-        run: ansible-galaxy collection install ansible.utils
+      - name: Build and install collection
+        run: |
+          ansible-galaxy collection build
+          ansible-galaxy collection install cozystack-installer-*.tar.gz --force
 
       - name: Test auto-detection from server group (3 nodes)
         run: >-
@@ -96,6 +98,11 @@ jobs:
         run: >-
           ansible-playbook tests/test-master-nodes.yml
           --inventory tests/ci-inventory.yml
+
+      - name: Test IPv6 host keys are accepted
+        run: >-
+          ansible-playbook tests/test-master-nodes.yml
+          --inventory tests/test-ipv6-inventory.yml
 
       - name: Test hostname host keys are rejected
         run: |
@@ -130,8 +137,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install Ansible and dependencies
-        run: pip install ansible-core netaddr
+      - name: Install Ansible
+        run: pip install ansible-core
 
       - name: Build and install collection
         run: |
