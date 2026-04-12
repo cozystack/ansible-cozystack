@@ -1,16 +1,18 @@
 ---
-# Example: Prepare Ubuntu nodes for Cozystack
+# Example: Prepare Ubuntu/Debian nodes for Cozystack
 # This playbook installs required packages, configures kernel parameters,
 # and sets k3s server arguments compatible with k3s.orchestration collection.
 #
-# Targets Ubuntu 22.04+ / 24.04. Debian is NOT a supported target for this
-# example — its ZFS path lives in contrib and needs zfs-dkms, and
-# linux-modules-extra is Ubuntu-only. Debian users should adapt this
-# playbook to their environment.
+# Targets Ubuntu 22.04+ / 24.04 and Debian 12. Distro-specific parts:
+# - linux-modules-extra is only installed on Ubuntu (ships openvswitch
+#   and geneve on cloud/minimal kernels). Debian bundles these in the
+#   base kernel image.
+# - ZFS automation is Ubuntu-only. Debian needs contrib + zfs-dkms set
+#   up manually; set cozystack_enable_zfs: false to skip.
 #
 # Run before k3s deployment: ansible-playbook prepare-ubuntu.yml
 
-- name: Prepare Ubuntu nodes for Cozystack
+- name: Prepare Ubuntu/Debian nodes for Cozystack
   hosts: cluster
   become: true
   vars:
@@ -27,8 +29,11 @@
       # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime.
       # Pin to ansible_kernel so headers match the running kernel.
       - "linux-headers-{{ ansible_kernel }}"
-      # Ubuntu cloud/minimal kernels ship openvswitch and geneve in
-      # linux-modules-extra-*, not in the base modules package.
+
+    # Ubuntu-only: linux-modules-extra-* ships openvswitch and geneve
+    # on cloud/minimal kernels. Debian includes these in its base
+    # kernel image and has no such split package.
+    cozystack_ubuntu_extra_packages:
       - "linux-modules-extra-{{ ansible_kernel }}"
 
     # Opt-out toggles are intentionally not defined here so they can be
@@ -122,6 +127,12 @@
         state: present
         update_cache: true
 
+    - name: Install Ubuntu-only extra kernel modules
+      ansible.builtin.apt:
+        name: "{{ cozystack_ubuntu_extra_packages }}"
+        state: present
+      when: ansible_distribution == 'Ubuntu'
+
     - name: Load kernel modules at boot (containerd, Kubernetes, Kube-OVN)
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack.conf
@@ -210,18 +221,34 @@
           so this will take effect once multipathd can start.
       when: _cozystack_multipathd.failed | default(false)
 
-    # ZFS backend for LINSTOR
+    # ZFS backend for LINSTOR (Ubuntu only — Debian needs contrib
+    # + zfs-dkms set up manually).
+    - name: Warn that ZFS on Debian needs manual setup
+      ansible.builtin.debug:
+        msg: >-
+          NOTE: ZFS on Debian requires enabling the contrib component
+          and installing zfs-dkms manually. This playbook skips ZFS
+          automation on Debian. Set cozystack_enable_zfs: false to
+          silence this notice.
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Debian'
+
     - name: Install ZFS userspace tools
       ansible.builtin.apt:
         name: zfsutils-linux
         state: present
-      when: cozystack_enable_zfs | default(true) | bool
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
 
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
       register: _cozystack_zfs_modprobe
-      when: cozystack_enable_zfs | default(true) | bool
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
       failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
 
     # Only persist zfs in modules-load.d if the module actually loaded —
@@ -233,6 +260,7 @@
         content: "zfs\n"
       when:
         - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
         - _cozystack_zfs_modprobe is defined
         - not (_cozystack_zfs_modprobe.failed | default(false))
 
@@ -244,6 +272,7 @@
           Set cozystack_enable_zfs: false to silence.
       when:
         - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 

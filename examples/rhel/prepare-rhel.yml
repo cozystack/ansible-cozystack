@@ -22,6 +22,10 @@
       # Kernel headers — Piraeus operator compiles DRBD 9.x against the
       # RUNNING kernel, not the latest staged one, so pin to ansible_kernel.
       - "kernel-devel-{{ ansible_kernel }}"
+      # Extra kernel modules — br_netfilter, ip_tables, iptable_nat and
+      # other Kubernetes/Kube-OVN prerequisites are in kernel-modules-extra
+      # on RHEL 9+ (they were in kernel-modules on RHEL 8 and earlier).
+      - "kernel-modules-extra-{{ ansible_kernel }}"
 
     # Opt-out toggles: cozystack_enable_zfs and cozystack_enable_kubevirt
     # (both default to true). Override from inventory to skip. They are

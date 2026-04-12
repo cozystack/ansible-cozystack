@@ -1,5 +1,5 @@
 ---
-# Full pipeline: prepare Ubuntu nodes + deploy k3s + install Cozystack
+# Full pipeline: prepare Ubuntu/Debian nodes + deploy k3s + install Cozystack
 #
 # Prerequisites:
 #   ansible-galaxy collection install --requirements-file requirements.yml
@@ -7,7 +7,7 @@
 # Usage:
 #   ansible-playbook site.yml
 
-- name: Prepare Ubuntu nodes for Cozystack
+- name: Prepare Ubuntu/Debian nodes for Cozystack
   ansible.builtin.import_playbook: prepare-ubuntu.yml
 
 - name: Deploy k3s cluster
