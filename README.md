@@ -67,7 +67,7 @@ LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container com
 
 | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- |
-| `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` | `kernel-default-devel-{{ ansible_kernel }}` |
+| `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` plus `kernel-modules-extra-{{ ansible_kernel }}` | `kernel-default-devel` (zypper resolves to running kernel — SUSE's NVR format differs from `uname -r`) |
 
 #### Required: Multipath DRBD blacklist
 
@@ -144,6 +144,26 @@ vhost_net
 tun
 kvm_intel  # or kvm_amd depending on the CPU
 ```
+
+#### Known limitations
+
+ZFS support depends on the OS ecosystem and kernel flavor. The prepare
+playbooks skip ZFS automation gracefully in these cases and emit an
+informational notice:
+
+| OS / kernel | ZFS automation | Reason |
+| --- | --- | --- |
+| Ubuntu 22.04 / 24.04 | Automated | `zfsutils-linux` in main repo; kernel module ships in `linux-modules-extra-*` |
+| Debian 12+ | **Not automated** | `zfsutils-linux` lives in `contrib`; kernel module requires `zfs-dkms`. Enable contrib and install manually, or set `cozystack_enable_zfs: false`. |
+| RHEL 9 / Rocky 9 / Alma 9 (stock kernel) | Automated | OpenZFS release RPM via `cozystack_zfs_release_rpm_by_major` |
+| RHEL 10 (stock kernel) | **Fails fast** | OpenZFS has not yet published an el10 release RPM. Add an entry to `cozystack_zfs_release_rpm_by_major` when upstream ships one, or set `cozystack_enable_zfs: false`. |
+| Oracle Linux 9/10 (UEK kernel) | **Not automated** | OpenZFS publishes kmod builds only for the stock RHEL kernel, not for Oracle's UEK. Switch the host to the `kernel` package (RHEL-compat) and reboot, or set `cozystack_enable_zfs: false`. |
+| openSUSE Leap 15.6 / Tumbleweed / SLE | Automated | OBS `filesystems` repo; the playbook auto-detects the path segment |
+
+Other subsystem notes:
+
+- **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.
+- **Piraeus DRBD loader + staged kernel updates:** kernel headers must match the *running* kernel. The playbooks pin `linux-headers-{{ ansible_kernel }}` / `kernel-devel-{{ ansible_kernel }}` for this reason. On openSUSE/SLE, zypper rejects the version suffix because SUSE's NVR format differs from `uname -r`; `kernel-default-devel` is used unversioned and zypper resolves it to the installed kernel. Reboot after any kernel update before running the playbook.
 
 #### Recommended: BPF filesystem mount for Cilium
 

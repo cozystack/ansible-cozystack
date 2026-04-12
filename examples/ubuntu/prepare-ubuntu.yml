@@ -276,15 +276,16 @@
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 
-    # Remove the drop-in when ZFS is disabled OR when modprobe failed,
-    # so systemd-modules-load does not keep failing every boot on a
-    # module that cannot be loaded.
-    - name: Remove ZFS modules-load drop-in when disabled or load failed
+    # Remove the drop-in in any case where ZFS should not auto-load:
+    # opt-out, Debian (not automated), or modprobe failed. Without this,
+    # systemd-modules-load.service would try the absent module every boot.
+    - name: Remove ZFS modules-load drop-in when not active
       ansible.builtin.file:
         path: /etc/modules-load.d/cozystack-zfs.conf
         state: absent
       when: >-
         not (cozystack_enable_zfs | default(true) | bool) or
+        ansible_distribution != 'Ubuntu' or
         (_cozystack_zfs_modprobe is defined and
          _cozystack_zfs_modprobe.failed | default(false))
 
