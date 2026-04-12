@@ -2,6 +2,15 @@
 cozystack.installer Release Notes
 ============================
 
+v1.2.3
+======
+
+- Drop ``ansible.utils`` collection dependency and ``netaddr`` Python
+  package requirement. Master node IP validation now uses a bundled
+  ``cozystack.installer.is_ip_address`` Jinja2 test backed by the
+  Python standard library ``ipaddress`` module.
+- Add IPv6 inventory fixture and CI coverage for IPv6 host keys.
+
 v1.1.2
 ======
 

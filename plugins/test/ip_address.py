@@ -10,6 +10,7 @@ __metaclass__ = type
 DOCUMENTATION = """
     name: is_ip_address
     author: Cozystack Contributors
+    version_added: "1.2.3"
     short_description: Test whether a string is a valid IPv4 or IPv6 address
     description:
       - Returns True if the input is a valid IPv4 or IPv6 address.

@@ -64,6 +64,10 @@ jobs:
         working-directory: ansible_collections/cozystack/installer
         run: ansible-test sanity --color
 
+      - name: Run unit tests
+        working-directory: ansible_collections/cozystack/installer
+        run: ansible-test units --color --python 3.14
+
   master-nodes:
     name: Multi-master MASTER_NODES
     runs-on: ubuntu-latest
