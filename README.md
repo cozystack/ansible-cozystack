@@ -95,6 +95,12 @@ Plus the following sysctls:
 
 | Parameter | Value | Why |
 | --- | --- | --- |
+| `fs.inotify.max_user_watches` | `524288` | Kubernetes watch events |
+| `fs.inotify.max_user_instances` | `8192` | Multiple inotify watchers |
+| `fs.inotify.max_queued_events` | `65536` | Event queue depth |
+| `fs.file-max` | `2097152` | Open file descriptors limit |
+| `fs.aio-max-nr` | `1048576` | Async I/O operations (databases) |
+| `vm.swappiness` | `1` | Minimize swap usage |
 | `net.ipv4.ip_forward` | `1` | Pod-to-pod routing |
 | `net.ipv4.conf.all.forwarding` | `1` | Global IP forwarding |
 | `net.ipv6.conf.all.forwarding` | `1` | Required for Kube-OVN dual-stack |
@@ -278,7 +284,7 @@ Runs on `server[0]` only.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_chart_ref` | `oci://ghcr.io/cozystack/cozystack/cozy-installer` | Helm chart OCI reference |
-| `cozystack_chart_version` | `1.1.2` | Helm chart version |
+| `cozystack_chart_version` | `1.2.2` | Helm chart version |
 | `cozystack_release_name` | `cozy-installer` | Helm release name |
 | `cozystack_namespace` | `cozy-system` | Namespace for operator and resources |
 | `cozystack_release_namespace` | `kube-system` | Namespace for Helm release secret |

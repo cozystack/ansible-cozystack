@@ -26,8 +26,13 @@
     # the task below adds the OpenZFS release RPM before installing.
     cozystack_enable_zfs: true
 
-    # URL to the OpenZFS release RPM. Uses $releasever so it works on 9, 10, ...
+    # URL to the OpenZFS release RPM. OpenZFS rotates this periodically;
+    # adjust version when upstream publishes a new release RPM.
     cozystack_zfs_release_rpm: "https://zfsonlinux.org/epel/zfs-release-2-8.el{{ ansible_distribution_major_version }}.noarch.rpm"
+
+    # OpenZFS project GPG key, imported before installing the release RPM
+    # to avoid disabling GPG verification.
+    cozystack_zfs_gpg_key_url: "https://raw.githubusercontent.com/zfsonlinux/zfsonlinux.github.com/master/zfs-release/RPM-GPG-KEY-openzfs-key2"
 
     # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
     # kvm_amd kernel modules. QEMU and libvirt run inside KubeVirt pods, so
@@ -178,11 +183,16 @@
         state: started
 
     # ZFS backend for LINSTOR (opt-out via cozystack_enable_zfs=false)
+    - name: Import OpenZFS GPG key
+      ansible.builtin.rpm_key:
+        key: "{{ cozystack_zfs_gpg_key_url }}"
+        state: present
+      when: cozystack_enable_zfs
+
     - name: Install OpenZFS release RPM
       ansible.builtin.dnf:
         name: "{{ cozystack_zfs_release_rpm }}"
         state: present
-        disable_gpg_check: true
       when: cozystack_enable_zfs
 
     - name: Install ZFS packages
@@ -191,7 +201,14 @@
         state: present
       when: cozystack_enable_zfs
 
-    - name: Load ZFS kernel module
+    - name: Load ZFS kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-zfs.conf
+        mode: "0644"
+        content: "zfs\n"
+      when: cozystack_enable_zfs
+
+    - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
       when: cozystack_enable_zfs

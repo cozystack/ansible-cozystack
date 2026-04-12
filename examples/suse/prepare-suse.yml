@@ -29,9 +29,12 @@
     # the task below adds the OBS 'filesystems' repo before installing.
     cozystack_enable_zfs: true
 
-    # OBS 'filesystems' repo for openSUSE Leap.
-    # Auto-selects per-version path using ansible_distribution_version.
-    cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ ansible_distribution_version }}/filesystems.repo"
+    # OBS 'filesystems' repo path segment. OBS uses canonical distribution
+    # names (openSUSE_Leap_15.6, openSUSE_Tumbleweed, SLE_15_SP6, ...) as
+    # subdirectories, NOT bare version numbers. Override this variable for
+    # Tumbleweed or SLE; the default targets openSUSE Leap.
+    cozystack_zfs_obs_path: "openSUSE_Leap_{{ ansible_distribution_version }}"
+    cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/filesystems.repo"
 
     # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
     # kvm_amd kernel modules. QEMU and libvirt run inside KubeVirt pods, so
@@ -195,7 +198,14 @@
         state: present
       when: cozystack_enable_zfs
 
-    - name: Load ZFS kernel module
+    - name: Load ZFS kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-zfs.conf
+        mode: "0644"
+        content: "zfs\n"
+      when: cozystack_enable_zfs
+
+    - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
       when: cozystack_enable_zfs

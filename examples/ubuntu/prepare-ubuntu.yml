@@ -21,8 +21,10 @@
       # LINSTOR LVM/thin provisioning (required by Cozystack storage)
       - lvm2
       - thin-provisioning-tools
-      # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime
-      - linux-headers-generic
+      # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime.
+      # Use running-kernel suffix so the same list works on both Ubuntu
+      # (linux-headers-<kernel>) and Debian (linux-headers-<arch>).
+      - "linux-headers-{{ ansible_kernel }}"
 
     # Enable ZFS backend for LINSTOR. Installs zfsutils-linux and loads the
     # zfs kernel module. Ubuntu 22.04+ ships the ZFS kernel module in
@@ -184,7 +186,14 @@
         state: present
       when: cozystack_enable_zfs
 
-    - name: Load ZFS kernel module
+    - name: Load ZFS kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-zfs.conf
+        mode: "0644"
+        content: "zfs\n"
+      when: cozystack_enable_zfs
+
+    - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
       when: cozystack_enable_zfs
