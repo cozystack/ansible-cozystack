@@ -35,10 +35,11 @@
       "customType": "regex",
       "fileMatch": ["(^|/)requirements\\.yml$"],
       "matchStrings": [
-        "source:\\s*https://github\\.com/cozystack/ansible-cozystack\\.git\\s+type:\\s*git\\s+version:\\s*(?<currentValue>\\S+)"
+        "source:\\s*https://github\\.com/cozystack/ansible-cozystack\\.git\\s+type:\\s*git\\s+version:\\s*v?(?<currentValue>\\S+)"
       ],
       "depNameTemplate": "ghcr.io/cozystack/cozystack/cozy-installer",
-      "datasourceTemplate": "docker"
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "source: https://github.com/cozystack/ansible-cozystack.git\n    type: git\n    version: v{{{newValue}}}"
     },
     {
       "customType": "regex",
