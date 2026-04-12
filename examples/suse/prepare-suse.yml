@@ -115,6 +115,7 @@
       ansible.builtin.systemd:
         name: multipathd
         state: restarted
+      failed_when: false  # tolerated: same reason as the enable task below
 
   tasks:
     - name: Create k3s_cluster group for k3s.orchestration
@@ -236,25 +237,25 @@
       ansible.builtin.rpm_key:
         key: "{{ cozystack_zfs_obs_gpg_key }}"
         state: present
-      when: cozystack_enable_zfs | default(true)
+      when: cozystack_enable_zfs | default(true) | bool
 
     - name: Add OBS filesystems repository for ZFS
       community.general.zypper_repository:
         repo: "{{ cozystack_zfs_obs_repo }}"
         state: present
-      when: cozystack_enable_zfs | default(true)
+      when: cozystack_enable_zfs | default(true) | bool
 
     - name: Install ZFS packages
       community.general.zypper:
         name: zfs
         state: present
-      when: cozystack_enable_zfs | default(true)
+      when: cozystack_enable_zfs | default(true) | bool
 
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
       register: _cozystack_zfs_modprobe
-      when: cozystack_enable_zfs | default(true)
+      when: cozystack_enable_zfs | default(true) | bool
       failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
 
     # Only persist zfs in modules-load.d if the module actually loaded —
@@ -265,9 +266,9 @@
         mode: "0644"
         content: "zfs\n"
       when:
-        - cozystack_enable_zfs | default(true)
+        - cozystack_enable_zfs | default(true) | bool
         - _cozystack_zfs_modprobe is defined
-        - not _cozystack_zfs_modprobe.failed | default(false)
+        - not (_cozystack_zfs_modprobe.failed | default(false))
 
     - name: Warn if ZFS module failed to load
       ansible.builtin.debug:
@@ -276,7 +277,7 @@
           LINSTOR ZFS backend will not work until this is resolved.
           Set cozystack_enable_zfs: false to silence.
       when:
-        - cozystack_enable_zfs | default(true)
+        - cozystack_enable_zfs | default(true) | bool
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 
@@ -288,7 +289,7 @@
         path: /etc/modules-load.d/cozystack-zfs.conf
         state: absent
       when: >-
-        not (cozystack_enable_zfs | default(true)) or
+        not (cozystack_enable_zfs | default(true) | bool) or
         (_cozystack_zfs_modprobe is defined and
          _cozystack_zfs_modprobe.failed | default(false))
 
@@ -297,7 +298,7 @@
     - name: Detect CPU vendor for KVM module selection
       ansible.builtin.set_fact:
         _cozystack_kvm_module: "{{ 'kvm_intel' if 'GenuineIntel' in (ansible_processor | join(' ')) else 'kvm_amd' if 'AuthenticAMD' in (ansible_processor | join(' ')) else '' }}"
-      when: cozystack_enable_kubevirt | default(true)
+      when: cozystack_enable_kubevirt | default(true) | bool
 
     - name: Load KubeVirt kernel modules at boot
       ansible.builtin.copy:
@@ -306,10 +307,10 @@
         content: |
           vhost_net
           tun
+          {% if (_cozystack_kvm_module | default('')) | length > 0 %}
           {{ _cozystack_kvm_module }}
-      when:
-        - cozystack_enable_kubevirt | default(true)
-        - (_cozystack_kvm_module | default('')) | length > 0
+          {% endif %}
+      when: cozystack_enable_kubevirt | default(true) | bool
 
     - name: Load required KubeVirt kernel modules now
       community.general.modprobe:
@@ -317,13 +318,13 @@
       loop:
         - vhost_net
         - tun
-      when: cozystack_enable_kubevirt | default(true)
+      when: cozystack_enable_kubevirt | default(true) | bool
 
     - name: Load CPU-vendor KVM module now
       community.general.modprobe:
         name: "{{ _cozystack_kvm_module }}"
       when:
-        - cozystack_enable_kubevirt | default(true)
+        - cozystack_enable_kubevirt | default(true) | bool
         - (_cozystack_kvm_module | default('')) | length > 0
       failed_when: false  # unsupported CPU / virtualization disabled in BIOS
 
@@ -331,4 +332,4 @@
       ansible.builtin.file:
         path: /etc/modules-load.d/cozystack-kubevirt.conf
         state: absent
-      when: not (cozystack_enable_kubevirt | default(true))
+      when: not (cozystack_enable_kubevirt | default(true) | bool)

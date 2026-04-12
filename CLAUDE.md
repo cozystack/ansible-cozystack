@@ -73,10 +73,17 @@ Shallow "looks right" research will be rejected in plan review.
   - Use `failed_when: false` only when the failure is benign (module
     built into kernel, only one of two vendor-specific modules applies);
     document the reason inline.
-- Kernel headers: prefer `linux-headers-{{ ansible_kernel }}`,
-  `kernel-devel-{{ ansible_kernel }}`, or
-  `kernel-default-devel-{{ ansible_kernel }}` over the metapackage —
-  Piraeus builds DRBD against the running kernel, not the staged one.
+- Kernel headers: Piraeus builds DRBD against the running kernel, not
+  the staged one, so pin to the running kernel when the distro allows.
+  - Ubuntu/Debian: `linux-headers-{{ ansible_kernel }}` works.
+  - RHEL: `kernel-devel-{{ ansible_kernel }}` works.
+  - openSUSE/SLE: zypper rejects `kernel-default-devel-{{ ansible_kernel }}`
+    because SUSE package names use a different NVR format than `uname -r`.
+    Use the plain `kernel-default-devel` metapackage — zypper resolves
+    it to the version matching the installed kernel. Note: if a kernel
+    update is staged but not yet booted, this pulls headers for the
+    newer installed kernel, not the running one; the user should reboot
+    before running the playbook in that case.
 - External repos (OpenZFS release RPM, OBS `filesystems`):
   - Import the GPG key explicitly; **never** `disable_gpg_check: true`.
   - OBS path segments are canonical distro names (e.g.

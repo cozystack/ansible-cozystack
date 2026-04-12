@@ -36,7 +36,7 @@ on the control-plane node. No manual Helm installation is needed.
 
 Use the per-distro example playbooks as the authoritative list of what to set up:
 
-- `examples/ubuntu/prepare-ubuntu.yml` (Ubuntu/Debian)
+- `examples/ubuntu/prepare-ubuntu.yml` (Ubuntu 22.04+)
 - `examples/rhel/prepare-rhel.yml` (RHEL 8+/CentOS Stream 8+/Rocky/Alma)
 - `examples/suse/prepare-suse.yml` (openSUSE/SLE)
 
@@ -44,7 +44,7 @@ The sections below document each subsystem's requirement so you understand why t
 
 #### Required: Base storage I/O
 
-| Purpose | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
+| Purpose | Ubuntu | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- | --- |
 | NFS client | `nfs-common` | `nfs-utils` | `nfs-client` |
 | iSCSI initiator | `open-iscsi` | `iscsi-initiator-utils` | `open-iscsi` |
@@ -56,7 +56,7 @@ The `iscsid` and `multipathd` services must be enabled and running.
 
 LINSTOR uses LVM thin pools by default for local block storage.
 
-| Purpose | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
+| Purpose | Ubuntu | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- | --- |
 | LVM2 | `lvm2` | `lvm2` | `lvm2` |
 | Thin provisioning | `thin-provisioning-tools` | `device-mapper-persistent-data` | `thin-provisioning-tools` |
@@ -65,7 +65,7 @@ LINSTOR uses LVM thin pools by default for local block storage.
 
 LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source **against the running kernel** at runtime, so only kernel headers must be installed on the host — **no DRBD host packages are needed**. Pin the headers package to `ansible_kernel` so a staged-but-not-yet-booted kernel update doesn't install headers for the wrong kernel.
 
-| Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
+| Ubuntu | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- |
 | `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` | `kernel-default-devel-{{ ansible_kernel }}` |
 
