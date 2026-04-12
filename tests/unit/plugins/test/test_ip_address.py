@@ -39,6 +39,13 @@ def test_invalid_format():
     assert is_ip_address("") is False
 
 
+def test_cidr_not_accepted():
+    # CIDR notation represents a network, not a single address;
+    # ip_address() rejects it. This test documents the behavior.
+    assert is_ip_address("10.0.0.0/24") is False
+    assert is_ip_address("2001:db8::/32") is False
+
+
 def test_non_string_input():
     # The plugin should not raise on None; return False instead.
     assert is_ip_address(None) is False
