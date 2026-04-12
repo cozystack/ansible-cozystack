@@ -23,8 +23,11 @@
       - lvm2
       - thin-provisioning-tools
       # Kernel headers — Piraeus operator compiles DRBD 9.x against the
-      # RUNNING kernel, not the latest staged one, so pin to ansible_kernel.
-      - "kernel-default-devel-{{ ansible_kernel }}"
+      # running kernel. zypper resolves kernel-default-devel to the
+      # package matching the installed kernel. Version suffixes
+      # (kernel-default-devel-<uname -r>) do NOT match SUSE's package
+      # naming and cause "no provider found" errors.
+      - kernel-default-devel
 
     # Opt-out toggles: cozystack_enable_zfs and cozystack_enable_kubevirt
     # (both default to true). Override from inventory to skip. They are
@@ -211,6 +214,18 @@
         name: multipathd
         enabled: true
         state: started
+      register: _cozystack_multipathd
+      failed_when: false  # tolerated: VMs / kernels without dm_multipath
+
+    - name: Warn if multipathd failed to start
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: multipathd could not start. Likely causes:
+          dm_multipath kernel module missing, or no multipath-capable
+          storage attached. LINSTOR still works without MPIO, but
+          iSCSI failover will not. The DRBD blacklist file is in place
+          so this will take effect once multipathd can start.
+      when: _cozystack_multipathd.failed | default(false)
 
     # ZFS backend for LINSTOR.
     # Import the OBS filesystems signing key explicitly (rather than
@@ -281,13 +296,7 @@
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
     - name: Detect CPU vendor for KVM module selection
       ansible.builtin.set_fact:
-        _cozystack_kvm_module: >-
-          {%- if 'GenuineIntel' in (ansible_processor | join(' ')) -%}
-          kvm_intel
-          {%- elif 'AuthenticAMD' in (ansible_processor | join(' ')) -%}
-          kvm_amd
-          {%- else -%}
-          {%- endif -%}
+        _cozystack_kvm_module: "{{ 'kvm_intel' if 'GenuineIntel' in (ansible_processor | join(' ')) else 'kvm_amd' if 'AuthenticAMD' in (ansible_processor | join(' ')) else '' }}"
       when: cozystack_enable_kubevirt | default(true)
 
     - name: Load KubeVirt kernel modules at boot
@@ -300,7 +309,7 @@
           {{ _cozystack_kvm_module }}
       when:
         - cozystack_enable_kubevirt | default(true)
-        - _cozystack_kvm_module | length > 0
+        - (_cozystack_kvm_module | default('')) | length > 0
 
     - name: Load required KubeVirt kernel modules now
       community.general.modprobe:
@@ -315,7 +324,7 @@
         name: "{{ _cozystack_kvm_module }}"
       when:
         - cozystack_enable_kubevirt | default(true)
-        - _cozystack_kvm_module | length > 0
+        - (_cozystack_kvm_module | default('')) | length > 0
       failed_when: false  # unsupported CPU / virtualization disabled in BIOS
 
     - name: Remove KubeVirt modules-load drop-in when disabled
