@@ -12,11 +12,42 @@
   hosts: cluster
   become: true
   vars:
-    # Packages required by Cozystack (storage backends)
+    # Packages required by Cozystack on every node.
+    # See README "Node Prerequisites" for what each is for.
     cozystack_packages:
+      # Storage backends: NFS, iSCSI, Multipath
       - nfs-client
       - open-iscsi
       - multipath-tools
+      # LINSTOR LVM/thin provisioning (required by Cozystack storage)
+      - lvm2
+      - thin-provisioning-tools
+      # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime
+      - kernel-default-devel
+
+    # Enable ZFS backend for LINSTOR. On openSUSE ZFS is not in default repos;
+    # the task below adds the OBS 'filesystems' repo before installing.
+    cozystack_enable_zfs: true
+
+    # OBS 'filesystems' repo for openSUSE Leap.
+    # Auto-selects per-version path using ansible_distribution_version.
+    cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ ansible_distribution_version }}/filesystems.repo"
+
+    # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
+    # kvm_amd kernel modules. QEMU and libvirt run inside KubeVirt pods, so
+    # no host userspace packages are installed.
+    cozystack_enable_kubevirt: true
+
+    # Kernel modules required on every node.
+    # - overlay, br_netfilter: containerd + standard Kubernetes networking
+    # - openvswitch, geneve, ip_tables, iptable_nat: Kube-OVN
+    cozystack_kernel_modules:
+      - overlay
+      - br_netfilter
+      - openvswitch
+      - geneve
+      - ip_tables
+      - iptable_nat
 
     # Kernel parameters for Cozystack
     cozystack_sysctl_params:
@@ -27,6 +58,9 @@
       - { name: fs.aio-max-nr, value: "1048576" }
       - { name: net.ipv4.ip_forward, value: "1" }
       - { name: net.ipv4.conf.all.forwarding, value: "1" }
+      - { name: net.ipv6.conf.all.forwarding, value: "1" }
+      - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+      - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
       - { name: vm.swappiness, value: "1" }
 
     # k3s server arguments required by Cozystack.
@@ -46,6 +80,12 @@
     cozystack_k3s_server_config_yaml: |
       cluster-cidr: 10.42.0.0/16
       service-cidr: 10.43.0.0/16
+
+  handlers:
+    - name: Restart multipathd
+      ansible.builtin.systemd:
+        name: multipathd
+        state: restarted
 
   tasks:
     - name: Create k3s_cluster group for k3s.orchestration
@@ -69,6 +109,36 @@
         name: "{{ cozystack_packages }}"
         state: present
         update_cache: true
+
+    - name: Load kernel modules at boot (containerd, Kubernetes, Kube-OVN)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack.conf
+        mode: "0644"
+        content: "{{ cozystack_kernel_modules | join('\n') }}\n"
+
+    - name: Load kernel modules now
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop: "{{ cozystack_kernel_modules }}"
+      failed_when: false  # some may be built into the kernel
+
+    - name: Ensure multipath drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/multipath/conf.d
+        state: directory
+        mode: "0755"
+
+    # CRITICAL: without this blacklist, multipathd grabs drbd* devices
+    # and makes LINSTOR volumes inaccessible after reboot.
+    - name: Blacklist DRBD devices in multipathd
+      ansible.builtin.copy:
+        dest: /etc/multipath/conf.d/cozystack-drbd-blacklist.conf
+        mode: "0644"
+        content: |
+          blacklist {
+              devnode "^drbd[0-9]+"
+          }
+      notify: Restart multipathd
 
     - name: Configure sysctl parameters
       ansible.posix.sysctl:
@@ -110,3 +180,44 @@
         name: multipathd
         enabled: true
         state: started
+
+    # ZFS backend for LINSTOR (opt-out via cozystack_enable_zfs=false)
+    - name: Add OBS filesystems repository for ZFS
+      community.general.zypper_repository:
+        repo: "{{ cozystack_zfs_obs_repo }}"
+        auto_import_keys: true
+        state: present
+      when: cozystack_enable_zfs
+
+    - name: Install ZFS packages
+      community.general.zypper:
+        name: zfs
+        state: present
+      when: cozystack_enable_zfs
+
+    - name: Load ZFS kernel module
+      community.general.modprobe:
+        name: zfs
+      when: cozystack_enable_zfs
+
+    # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
+    # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
+    - name: Load KubeVirt kernel modules at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-kubevirt.conf
+        mode: "0644"
+        content: |
+          vhost_net
+          tun
+      when: cozystack_enable_kubevirt
+
+    - name: Load KubeVirt kernel modules now
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop:
+        - vhost_net
+        - tun
+        - kvm_intel
+        - kvm_amd
+      failed_when: false  # only one of kvm_intel/kvm_amd succeeds per CPU vendor
+      when: cozystack_enable_kubevirt

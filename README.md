@@ -30,35 +30,126 @@ The role automatically installs Helm and the
 [helm-diff](https://github.com/databus23/helm-diff) plugin
 on the control-plane node. No manual Helm installation is needed.
 
-### Target nodes
+### Node Prerequisites
 
-The following must be configured on ALL cluster nodes before running the
-collection. See the per-distro example playbooks:
+> **Important:** Cozystack components have several non-obvious node requirements that must be configured on ALL cluster nodes. The example prepare playbooks install everything, load required kernel modules, and apply a critical multipath blacklist. Running Cozystack on hand-prepared nodes without these will cause silent failures: LINSTOR volumes inaccessible after reboot, VMs stuck in Pending, OVN tunnels not coming up.
+
+Use the per-distro example playbooks as the authoritative list of what to set up:
 
 - `examples/ubuntu/prepare-ubuntu.yml` (Ubuntu/Debian)
 - `examples/rhel/prepare-rhel.yml` (RHEL 8+/CentOS Stream 8+/Rocky/Alma)
 - `examples/suse/prepare-suse.yml` (openSUSE/SLE)
 
-#### System packages
+The sections below document each subsystem's requirement so you understand why the prepare playbook installs what it installs. Package names are verified against the current LTS repos (Ubuntu 22.04/24.04, RHEL 9, openSUSE Leap 15.6).
 
-| Package (Debian/Ubuntu) | Package (RHEL/CentOS) | Package (openSUSE/SLE) | Purpose |
+#### Required: Base storage I/O
+
+| Purpose | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- | --- |
-| `nfs-common` | `nfs-utils` | `nfs-client` | NFS storage driver support |
-| `open-iscsi` | `iscsi-initiator-utils` | `open-iscsi` | iSCSI storage driver (LINSTOR) |
-| `multipath-tools` | `device-mapper-multipath` | `multipath-tools` | Multipath I/O for HA storage |
+| NFS client | `nfs-common` | `nfs-utils` | `nfs-client` |
+| iSCSI initiator | `open-iscsi` | `iscsi-initiator-utils` | `open-iscsi` |
+| Multipath I/O | `multipath-tools` | `device-mapper-multipath` | `multipath-tools` |
 
-#### Kernel parameters
+The `iscsid` and `multipathd` services must be enabled and running.
+
+#### Required: LINSTOR LVM/thin provisioning
+
+LINSTOR uses LVM thin pools by default for local block storage.
+
+| Purpose | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
+| --- | --- | --- | --- |
+| LVM2 | `lvm2` | `lvm2` | `lvm2` |
+| Thin provisioning | `thin-provisioning-tools` | `device-mapper-persistent-data` | `thin-provisioning-tools` |
+
+#### Required: Kernel headers (Piraeus DRBD loader)
+
+LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source at runtime, so only kernel headers must be installed on the host — **no DRBD host packages are needed**.
+
+| Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
+| --- | --- | --- |
+| `linux-headers-generic` | `kernel-devel` | `kernel-default-devel` |
+
+#### Required: Multipath DRBD blacklist
+
+> **Silent failure if omitted.** `multipathd` defaults to grabbing any device matching common patterns including DRBD's `drbd*`. Once that happens LINSTOR cannot access its own volumes and volumes become unreadable after the next reboot.
+
+The prepare playbooks drop this file into place:
+
+```text
+# /etc/multipath/conf.d/cozystack-drbd-blacklist.conf
+blacklist {
+    devnode "^drbd[0-9]+"
+}
+```
+
+#### Required: Containerd + Kubernetes kernel modules
+
+Required for containerd's overlay storage driver and standard Kubernetes bridge networking. Loaded via `/etc/modules-load.d/cozystack.conf`:
+
+```text
+overlay
+br_netfilter
+```
+
+Plus the following sysctls:
 
 | Parameter | Value | Why |
 | --- | --- | --- |
-| `fs.inotify.max_user_watches` | `524288` | Kubernetes watch events |
-| `fs.inotify.max_user_instances` | `8192` | Multiple inotify watchers |
-| `fs.inotify.max_queued_events` | `65536` | Event queue depth |
-| `fs.file-max` | `2097152` | Open file descriptors limit |
-| `fs.aio-max-nr` | `1048576` | Async I/O operations (databases) |
 | `net.ipv4.ip_forward` | `1` | Pod-to-pod routing |
 | `net.ipv4.conf.all.forwarding` | `1` | Global IP forwarding |
-| `vm.swappiness` | `1` | Minimize swap usage |
+| `net.ipv6.conf.all.forwarding` | `1` | Required for Kube-OVN dual-stack |
+| `net.bridge.bridge-nf-call-iptables` | `1` | Bridge traffic visible to iptables |
+| `net.bridge.bridge-nf-call-ip6tables` | `1` | Same for IPv6 |
+
+#### Required: Kube-OVN kernel modules
+
+Kube-OVN bundles the OVS userspace daemon in its own DaemonSet — only the kernel modules are needed on the host:
+
+```text
+# /etc/modules-load.d/cozystack.conf (same file)
+openvswitch
+geneve
+ip_tables
+iptable_nat
+```
+
+The `openvswitch` kernel module is in the upstream kernel since 3.3; no OVS userspace package is required on the host.
+
+#### Enabled by default: ZFS backend for LINSTOR
+
+`cozystack_enable_zfs: true` (default) installs ZFS userspace tools and loads the kernel module. Set to `false` to skip.
+
+| Distribution | Package | Repo |
+| --- | --- | --- |
+| Ubuntu 22.04 / 24.04 | `zfsutils-linux` | Default repos (kernel module ships in `linux-modules-extra-*`) |
+| RHEL 9 / Rocky 9 / Alma 9 | `zfs` | OpenZFS release RPM — prepare playbook installs it automatically |
+| openSUSE Leap 15.6 | `zfs` | OBS `filesystems` repo — prepare playbook adds it automatically |
+
+#### Enabled by default: KubeVirt virtualization
+
+`cozystack_enable_kubevirt: true` (default) loads the kernel modules KubeVirt needs. Set to `false` to skip.
+
+> **No host userspace packages are installed.** KubeVirt bundles QEMU and libvirt in its own pods. Only the kernel modules listed below are loaded on the host.
+
+Loaded via `/etc/modules-load.d/cozystack-kubevirt.conf`:
+
+```text
+vhost_net
+tun
+```
+
+Plus `kvm_intel` or `kvm_amd` at runtime (auto-detected — the prepare playbook attempts both, only the one matching the CPU succeeds).
+
+#### Recommended: BPF filesystem mount for Cilium
+
+Cilium stores eBPF maps at `/sys/fs/bpf`. The Cilium DaemonSet mounts this path itself when missing, but for production durability across reboots add:
+
+```text
+# /etc/fstab
+bpffs /sys/fs/bpf bpf defaults 0 0
+```
+
+The prepare playbook does not automate this.
 
 #### System services
 

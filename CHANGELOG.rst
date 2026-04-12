@@ -2,6 +2,34 @@
 cozystack.installer Release Notes
 ============================
 
+v1.3.0
+======
+
+Node prerequisites: comprehensive audit and install in examples.
+
+- Example prepare playbooks now install the full set of node prerequisites.
+  Base additions: ``lvm2``, ``thin-provisioning-tools`` /
+  ``device-mapper-persistent-data``, and kernel headers
+  (``linux-headers-generic`` / ``kernel-devel`` / ``kernel-default-devel``).
+- Kernel modules for containerd, Kubernetes bridge networking, and Kube-OVN
+  loaded via ``/etc/modules-load.d/cozystack.conf``: ``overlay``,
+  ``br_netfilter``, ``openvswitch``, ``geneve``, ``ip_tables``, ``iptable_nat``.
+- Additional sysctl parameters: ``net.bridge.bridge-nf-call-iptables``,
+  ``net.bridge.bridge-nf-call-ip6tables``, ``net.ipv6.conf.all.forwarding``.
+- Critical fix: ``multipathd`` DRBD device blacklist at
+  ``/etc/multipath/conf.d/cozystack-drbd-blacklist.conf``. Without it
+  LINSTOR volumes become inaccessible after node reboot.
+- New opt-out variable ``cozystack_enable_zfs`` (default ``true``) installs
+  ``zfsutils-linux`` on Ubuntu. RHEL prepare playbook auto-adds the OpenZFS
+  release RPM; openSUSE prepare playbook auto-adds the OBS ``filesystems``
+  repo.
+- New opt-out variable ``cozystack_enable_kubevirt`` (default ``true``) loads
+  ``vhost_net``, ``tun``, and ``kvm_intel``/``kvm_amd`` kernel modules.
+  QEMU and libvirt are bundled in KubeVirt pods; no host userspace packages
+  are installed.
+- README now documents every node prerequisite per subsystem with exact
+  package names for Ubuntu 22.04/24.04, RHEL 9, and openSUSE Leap 15.6.
+
 v1.1.2
 ======
 
