@@ -301,12 +301,17 @@ Runs on `server[0]` only.
 | `cozystack_join_cidr` | `100.64.0.0/16` | Join CIDR |
 | `cozystack_master_nodes` | `""` (auto-detect) | Comma-separated control-plane node IPs for kube-ovn RAFT. Empty = auto-detect from `server` group |
 | `cozystack_operator_wait_timeout` | `300` | Timeout for operator/CRD readiness (seconds) |
-| `cozystack_enable_zfs` | `true` | Example playbook: install ZFS userspace + load module. Set `false` to skip. |
-| `cozystack_enable_kubevirt` | `true` | Example playbook: load KubeVirt kernel modules. Set `false` to skip. |
 
-`cozystack_enable_zfs` and `cozystack_enable_kubevirt` are consumed by the
-example prepare playbooks and are safe to set from inventory host/group
-vars to opt out.
+### Example playbook variables
+
+These variables are consumed only by the example prepare playbooks in
+`examples/*/`, not by the role itself. Set them as inventory host/group
+vars to opt out of the corresponding prepare step:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `cozystack_enable_zfs` | `true` | Example playbooks: install ZFS userspace and load the module. Set `false` to skip. |
+| `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules. Set `false` to skip. |
 
 ## Using with k3s
 

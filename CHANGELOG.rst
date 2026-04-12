@@ -37,30 +37,6 @@ Node prerequisites: comprehensive audit and install in examples.
 - README now documents every node prerequisite per subsystem with exact
   package names for Ubuntu 22.04/24.04, RHEL 9, and openSUSE Leap 15.6.
 
-v1.2.2
-======
-
-Synced with Cozystack v1.2.2.
-
-- Bump ``cozystack_chart_version`` to ``1.2.2``
-
-v1.2.1
-======
-
-Synced with Cozystack v1.2.1.
-
-- Bump ``cozystack_chart_version`` to ``1.2.1``
-- Derive ``MASTER_NODES`` for kube-ovn from the ``server`` inventory
-  group; add ``cozystack_master_nodes`` override for multi-master setups
-- Validate master node entries are valid IP addresses, not hostnames
-
-v1.1.3
-======
-
-Synced with Cozystack v1.1.3.
-
-- Bump ``cozystack_chart_version`` to ``1.1.3``
-
 v1.1.2
 ======
 

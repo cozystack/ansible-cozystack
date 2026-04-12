@@ -219,13 +219,17 @@
     - name: Download OBS filesystems signing key
       ansible.builtin.get_url:
         url: "{{ cozystack_zfs_obs_gpg_key }}"
-        dest: /etc/pki/trust/anchors/obs-filesystems.key
+        dest: /etc/pki/rpm-gpg/obs-filesystems.gpg
         mode: "0644"
       register: _cozystack_obs_key
       when: cozystack_enable_zfs | default(true)
 
     - name: Import OBS filesystems signing key
-      ansible.builtin.command: rpm --import {{ _cozystack_obs_key.dest }}
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - --import
+          - "{{ _cozystack_obs_key.dest }}"
       changed_when: _cozystack_obs_key is changed
       when:
         - cozystack_enable_zfs | default(true)
@@ -273,6 +277,12 @@
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 
+    - name: Remove ZFS modules-load drop-in when disabled
+      ansible.builtin.file:
+        path: /etc/modules-load.d/cozystack-zfs.conf
+        state: absent
+      when: not (cozystack_enable_zfs | default(true))
+
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
     - name: Detect CPU vendor for KVM module selection
@@ -313,3 +323,9 @@
         - cozystack_enable_kubevirt | default(true)
         - _cozystack_kvm_module | length > 0
       failed_when: false  # unsupported CPU / virtualization disabled in BIOS
+
+    - name: Remove KubeVirt modules-load drop-in when disabled
+      ansible.builtin.file:
+        path: /etc/modules-load.d/cozystack-kubevirt.conf
+        state: absent
+      when: not (cozystack_enable_kubevirt | default(true))
