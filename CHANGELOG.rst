@@ -10,11 +10,14 @@ Node prerequisites: comprehensive audit and install in examples.
 - Example prepare playbooks now install the full set of node prerequisites.
   Base additions: ``lvm2``, ``thin-provisioning-tools`` /
   ``device-mapper-persistent-data``, and kernel headers pinned to the
-  running kernel (``linux-headers-{{ ansible_kernel }}`` on Ubuntu/Debian,
+  running kernel (``linux-headers-{{ ansible_kernel }}`` on Ubuntu,
   ``kernel-devel-{{ ansible_kernel }}`` on RHEL,
   ``kernel-default-devel-{{ ansible_kernel }}`` on openSUSE). On Ubuntu
   the playbook also installs ``linux-modules-extra-{{ ansible_kernel }}``
   which provides ``openvswitch`` and ``geneve`` on cloud/minimal kernels.
+  ``prepare-ubuntu.yml`` is now Ubuntu-only — Debian requires contrib +
+  ``zfs-dkms`` for ZFS and is no longer claimed as a supported target
+  for this example.
 - Kernel modules for containerd, Kubernetes bridge networking, and Kube-OVN
   loaded via ``/etc/modules-load.d/cozystack.conf``: ``overlay``,
   ``br_netfilter``, ``openvswitch``, ``geneve``, ``ip_tables``, ``iptable_nat``.

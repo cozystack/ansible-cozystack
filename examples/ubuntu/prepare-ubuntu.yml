@@ -46,16 +46,16 @@
     # modules. QEMU and libvirt run inside KubeVirt pods, so no host
     # userspace packages are installed.
 
-    # overlay is usually built into the kernel, not a loadable module;
-    # modprobe is allowed to fail when that's the case.
+    # Optional: modules that may be compiled into the kernel on some
+    # distros. modprobe failures here are tolerated.
     cozystack_kernel_modules_optional:
       - overlay
+      - openvswitch
 
     # Required kernel modules. If any of these fails to load the playbook
     # stops — the next steps (sysctl, Kube-OVN) depend on them.
     cozystack_kernel_modules_required:
       - br_netfilter
-      - openvswitch
       - geneve
       - ip_tables
       - iptable_nat
@@ -234,11 +234,17 @@
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 
-    - name: Remove ZFS modules-load drop-in when disabled
+    # Remove the drop-in when ZFS is disabled OR when modprobe failed,
+    # so systemd-modules-load does not keep failing every boot on a
+    # module that cannot be loaded.
+    - name: Remove ZFS modules-load drop-in when disabled or load failed
       ansible.builtin.file:
         path: /etc/modules-load.d/cozystack-zfs.conf
         state: absent
-      when: not (cozystack_enable_zfs | default(true))
+      when: >-
+        not (cozystack_enable_zfs | default(true)) or
+        (_cozystack_zfs_modprobe is defined and
+         _cozystack_zfs_modprobe.failed | default(false))
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.

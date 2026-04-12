@@ -61,16 +61,16 @@
     cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/filesystems.repo"
     cozystack_zfs_obs_gpg_key: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/repodata/repomd.xml.key"
 
-    # overlay is usually built into the kernel, not a loadable module;
-    # modprobe is allowed to fail when that's the case.
+    # Optional: modules that may be compiled into the kernel on some
+    # distros. modprobe failures here are tolerated.
     cozystack_kernel_modules_optional:
       - overlay
+      - openvswitch
 
     # Required kernel modules. If any of these fails to load the playbook
     # stops — the next steps (sysctl, Kube-OVN) depend on them.
     cozystack_kernel_modules_required:
       - br_netfilter
-      - openvswitch
       - geneve
       - ip_tables
       - iptable_nat
@@ -215,25 +215,13 @@
     # ZFS backend for LINSTOR.
     # Import the OBS filesystems signing key explicitly (rather than
     # auto_import_keys: true) so the key source is visible in the
-    # playbook and can be audited.
-    - name: Download OBS filesystems signing key
-      ansible.builtin.get_url:
-        url: "{{ cozystack_zfs_obs_gpg_key }}"
-        dest: /etc/pki/rpm-gpg/obs-filesystems.gpg
-        mode: "0644"
-      register: _cozystack_obs_key
-      when: cozystack_enable_zfs | default(true)
-
+    # playbook and can be audited. rpm_key handles fetch + idempotent
+    # import in one step, without relying on /etc/pki/rpm-gpg existing.
     - name: Import OBS filesystems signing key
-      ansible.builtin.command:
-        argv:
-          - rpm
-          - --import
-          - "{{ _cozystack_obs_key.dest }}"
-      changed_when: _cozystack_obs_key is changed
-      when:
-        - cozystack_enable_zfs | default(true)
-        - _cozystack_obs_key is defined
+      ansible.builtin.rpm_key:
+        key: "{{ cozystack_zfs_obs_gpg_key }}"
+        state: present
+      when: cozystack_enable_zfs | default(true)
 
     - name: Add OBS filesystems repository for ZFS
       community.general.zypper_repository:
@@ -277,11 +265,17 @@
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 
-    - name: Remove ZFS modules-load drop-in when disabled
+    # Remove the drop-in when ZFS is disabled OR when modprobe failed,
+    # so systemd-modules-load does not keep failing every boot on a
+    # module that cannot be loaded.
+    - name: Remove ZFS modules-load drop-in when disabled or load failed
       ansible.builtin.file:
         path: /etc/modules-load.d/cozystack-zfs.conf
         state: absent
-      when: not (cozystack_enable_zfs | default(true))
+      when: >-
+        not (cozystack_enable_zfs | default(true)) or
+        (_cozystack_zfs_modprobe is defined and
+         _cozystack_zfs_modprobe.failed | default(false))
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.

@@ -4,7 +4,7 @@ Install [Cozystack](https://cozystack.io) on generic Kubernetes clusters (k3s, k
 
 Tested on:
 
-- **Ubuntu / Debian** — `examples/ubuntu/`
+- **Ubuntu 22.04 / 24.04** — `examples/ubuntu/`
 - **RHEL 8+ / CentOS Stream 8+ / Rocky / Alma** — `examples/rhel/`
 - **openSUSE / SLE** — `examples/suse/`
 
