@@ -42,3 +42,14 @@ def test_invalid_format():
 def test_non_string_input():
     # The plugin should not raise on None; return False instead.
     assert is_ip_address(None) is False
+
+
+def test_rejects_non_string_types():
+    # ipaddress.ip_address() silently accepts integers and booleans
+    # (treating them as 32-bit address values), but the plugin
+    # contract declares type: str — enforce it explicitly.
+    assert is_ip_address(42) is False
+    assert is_ip_address(True) is False
+    assert is_ip_address(False) is False
+    assert is_ip_address(b"10.0.0.1") is False
+    assert is_ip_address([]) is False

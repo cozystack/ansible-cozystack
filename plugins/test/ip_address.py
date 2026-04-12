@@ -42,6 +42,8 @@ from ipaddress import ip_address
 
 
 def is_ip_address(value):
+    if not isinstance(value, str):
+        return False
     try:
         ip_address(value)
     except (ValueError, TypeError):
