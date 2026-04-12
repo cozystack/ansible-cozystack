@@ -40,11 +40,14 @@
     # no host userspace packages are installed.
     cozystack_enable_kubevirt: true
 
-    # Kernel modules required on every node.
-    # - overlay, br_netfilter: containerd + standard Kubernetes networking
-    # - openvswitch, geneve, ip_tables, iptable_nat: Kube-OVN
-    cozystack_kernel_modules:
+    # overlay is usually built into the kernel, not a loadable module;
+    # modprobe is allowed to fail when that's the case.
+    cozystack_kernel_modules_optional:
       - overlay
+
+    # Required kernel modules. If any of these fails to load the playbook
+    # stops — the next steps (sysctl, Kube-OVN) depend on them.
+    cozystack_kernel_modules_required:
       - br_netfilter
       - openvswitch
       - geneve
@@ -116,13 +119,18 @@
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack.conf
         mode: "0644"
-        content: "{{ cozystack_kernel_modules | join('\n') }}\n"
+        content: "{{ (cozystack_kernel_modules_optional + cozystack_kernel_modules_required) | join('\n') }}\n"
 
-    - name: Load kernel modules now
+    - name: Load containerd overlay module (may be built-in)
       community.general.modprobe:
         name: "{{ item }}"
-      loop: "{{ cozystack_kernel_modules }}"
-      failed_when: false  # some may be built into the kernel
+      loop: "{{ cozystack_kernel_modules_optional }}"
+      failed_when: false  # overlay is usually built into the kernel
+
+    - name: Load required Kubernetes and Kube-OVN kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop: "{{ cozystack_kernel_modules_required }}"
 
     - name: Ensure multipath drop-in directory exists
       ansible.builtin.file:

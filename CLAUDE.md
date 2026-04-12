@@ -1,7 +1,7 @@
 # Project conventions: cozystack/ansible-cozystack
 
 This file captures project-specific working conventions that aren't obvious
-from the code. Global standards from `~/CLAUDE.md` still apply.
+from the code.
 
 ## Release strategy
 
@@ -33,18 +33,17 @@ from the code. Global standards from `~/CLAUDE.md` still apply.
 
 ## Review workflow for pull requests
 
-Every PR must receive both of:
+Every PR must receive at least two independent review passes before
+merging — one from a second LLM (run in parallel, in the background, so
+it does not block the main review) and one from a branch-diff-focused
+reviewer. Iterate on any blocking findings until both pass. False
+positives must be explicitly justified before dismissing.
 
-1. **`codex review --base main`** — start in background immediately after
-   pushing so it runs in parallel with the next reviewer.
-2. **`/review-branch --target main --project-type ansible-collection`** —
-   kick off right after codex.
+Only then enable auto-merge:
 
-Iterate on any blocking findings from either reviewer until codex returns
-a non-regression verdict AND `/review-branch` prints `LGTM`. False-positive
-findings must be explicitly justified before dismissing.
-
-Only then enable auto-merge (`gh pr merge --auto --squash --delete-branch`).
+```bash
+gh pr merge --auto --squash --delete-branch
+```
 
 ## Planning discipline
 
