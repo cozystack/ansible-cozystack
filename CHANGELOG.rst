@@ -11,6 +11,30 @@ v1.2.3
   Python standard library ``ipaddress`` module.
 - Add IPv6 inventory fixture and CI coverage for IPv6 host keys.
 
+v1.2.2
+======
+
+Synced with Cozystack v1.2.2.
+
+- Bump ``cozystack_chart_version`` to ``1.2.2``
+
+v1.2.1
+======
+
+Synced with Cozystack v1.2.1.
+
+- Bump ``cozystack_chart_version`` to ``1.2.1``
+- Derive ``MASTER_NODES`` for kube-ovn from the ``server`` inventory
+  group; add ``cozystack_master_nodes`` override for multi-master setups
+- Validate master node entries are valid IP addresses, not hostnames
+
+v1.1.3
+======
+
+Synced with Cozystack v1.1.3.
+
+- Bump ``cozystack_chart_version`` to ``1.1.3``
+
 v1.1.2
 ======
 
