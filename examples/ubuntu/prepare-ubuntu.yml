@@ -179,7 +179,18 @@
         enabled: true
         state: started
 
-    # ZFS backend for LINSTOR (opt-out via cozystack_enable_zfs=false)
+    # ZFS backend for LINSTOR (opt-out via cozystack_enable_zfs=false).
+    # On Debian zfsutils-linux lives in the 'contrib' component, which is
+    # disabled by default. Enable it only when ZFS is requested.
+    - name: Enable Debian contrib component for ZFS
+      ansible.builtin.apt_repository:
+        repo: "deb http://deb.debian.org/debian {{ ansible_distribution_release }} main contrib"
+        state: present
+        update_cache: true
+      when:
+        - cozystack_enable_zfs
+        - ansible_distribution == 'Debian'
+
     - name: Install ZFS userspace tools
       ansible.builtin.apt:
         name: zfsutils-linux
@@ -197,9 +208,12 @@
       community.general.modprobe:
         name: zfs
       when: cozystack_enable_zfs
+      failed_when: false  # Secure Boot / unsigned module environments
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
+    # Both kvm_intel and kvm_amd are listed so the correct one loads on
+    # any CPU; the other produces a harmless systemd-modules-load log line.
     - name: Load KubeVirt kernel modules at boot
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack-kubevirt.conf
@@ -207,6 +221,8 @@
         content: |
           vhost_net
           tun
+          kvm_intel
+          kvm_amd
       when: cozystack_enable_kubevirt
 
     - name: Load KubeVirt kernel modules now

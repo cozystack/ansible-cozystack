@@ -22,18 +22,26 @@
       # LINSTOR LVM/thin provisioning (required by Cozystack storage)
       - lvm2
       - thin-provisioning-tools
-      # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime
-      - kernel-default-devel
+      # Kernel headers — Piraeus operator compiles DRBD 9.x against the
+      # RUNNING kernel, not the latest staged one, so pin to ansible_kernel.
+      - "kernel-default-devel-{{ ansible_kernel }}"
 
     # Enable ZFS backend for LINSTOR. On openSUSE ZFS is not in default repos;
     # the task below adds the OBS 'filesystems' repo before installing.
     cozystack_enable_zfs: true
 
     # OBS 'filesystems' repo path segment. OBS uses canonical distribution
-    # names (openSUSE_Leap_15.6, openSUSE_Tumbleweed, SLE_15_SP6, ...) as
-    # subdirectories, NOT bare version numbers. Override this variable for
-    # Tumbleweed or SLE; the default targets openSUSE Leap.
-    cozystack_zfs_obs_path: "openSUSE_Leap_{{ ansible_distribution_version }}"
+    # names (openSUSE_Leap_15.6, openSUSE_Tumbleweed, SLE_15_SP6) as
+    # subdirectories, NOT bare version numbers. Auto-detected from the
+    # distribution fact; override only for unusual installs.
+    cozystack_zfs_obs_path: >-
+      {%- if ansible_distribution == 'openSUSE Leap' -%}
+      openSUSE_Leap_{{ ansible_distribution_version }}
+      {%- elif ansible_distribution == 'openSUSE Tumbleweed' -%}
+      openSUSE_Tumbleweed
+      {%- else -%}
+      SLE_{{ ansible_distribution_version.split('.')[0] }}_SP{{ ansible_distribution_version.split('.')[1] }}
+      {%- endif -%}
     cozystack_zfs_obs_repo: "https://download.opensuse.org/repositories/filesystems/{{ cozystack_zfs_obs_path }}/filesystems.repo"
 
     # Enable KubeVirt virtualization. Loads vhost_net, tun, and kvm_intel or
@@ -209,6 +217,7 @@
       community.general.modprobe:
         name: zfs
       when: cozystack_enable_zfs
+      failed_when: false  # Secure Boot / unsigned module environments
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
@@ -219,6 +228,8 @@
         content: |
           vhost_net
           tun
+          kvm_intel
+          kvm_amd
       when: cozystack_enable_kubevirt
 
     - name: Load KubeVirt kernel modules now

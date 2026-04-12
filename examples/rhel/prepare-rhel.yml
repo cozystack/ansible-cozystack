@@ -19,8 +19,9 @@
       # LINSTOR LVM/thin provisioning (required by Cozystack storage)
       - lvm2
       - device-mapper-persistent-data
-      # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime
-      - kernel-devel
+      # Kernel headers — Piraeus operator compiles DRBD 9.x against the
+      # RUNNING kernel, not the latest staged one, so pin to ansible_kernel.
+      - "kernel-devel-{{ ansible_kernel }}"
 
     # Enable ZFS backend for LINSTOR. On RHEL ZFS is not in default repos;
     # the task below adds the OpenZFS release RPM before installing.
@@ -212,6 +213,7 @@
       community.general.modprobe:
         name: zfs
       when: cozystack_enable_zfs
+      failed_when: false  # Secure Boot / unsigned module environments
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
@@ -222,6 +224,8 @@
         content: |
           vhost_net
           tun
+          kvm_intel
+          kvm_amd
       when: cozystack_enable_kubevirt
 
     - name: Load KubeVirt kernel modules now

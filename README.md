@@ -63,11 +63,11 @@ LINSTOR uses LVM thin pools by default for local block storage.
 
 #### Required: Kernel headers (Piraeus DRBD loader)
 
-LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source at runtime, so only kernel headers must be installed on the host — **no DRBD host packages are needed**.
+LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source **against the running kernel** at runtime, so only kernel headers must be installed on the host — **no DRBD host packages are needed**. Pin the headers package to `ansible_kernel` so a staged-but-not-yet-booted kernel update doesn't install headers for the wrong kernel.
 
 | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- |
-| `linux-headers-generic` | `kernel-devel` | `kernel-default-devel` |
+| `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` | `kernel-default-devel-{{ ansible_kernel }}` |
 
 #### Required: Multipath DRBD blacklist
 
@@ -128,6 +128,7 @@ The `openvswitch` kernel module is in the upstream kernel since 3.3; no OVS user
 | Distribution | Package | Repo |
 | --- | --- | --- |
 | Ubuntu 22.04 / 24.04 | `zfsutils-linux` | Default repos (kernel module ships in `linux-modules-extra-*`) |
+| Debian 12+ | `zfsutils-linux` | `contrib` component — prepare playbook enables it automatically when ZFS is requested |
 | RHEL 9 / Rocky 9 / Alma 9 | `zfs` | OpenZFS release RPM — prepare playbook installs it automatically |
 | openSUSE Leap 15.6 | `zfs` | OBS `filesystems` repo — prepare playbook adds it automatically |
 
