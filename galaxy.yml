@@ -1,7 +1,7 @@
 ---
 namespace: cozystack
 name: installer
-version: 1.2.2
+version: 1.2.3
 readme: README.md
 authors:
   - Aleksei Sviridkin <f@lex.la>
@@ -16,7 +16,6 @@ homepage: https://cozystack.io
 documentation: https://cozystack.io/docs
 dependencies:
   ansible.posix: ">=1.0.0"
-  ansible.utils: ">=2.0.0"
   kubernetes.core: ">=5.0.0"
 tags:
   - infrastructure
