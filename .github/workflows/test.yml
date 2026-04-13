@@ -57,8 +57,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install ansible-core
-        run: pip install ansible-core
+      - name: Install ansible-core and unit test dependencies
+        run: pip install ansible-core pytest pytest-xdist pytest-forked pytest-mock
 
       - name: Run sanity tests
         working-directory: ansible_collections/cozystack/installer
