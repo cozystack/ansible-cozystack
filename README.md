@@ -6,7 +6,7 @@ Supported targets:
 
 | Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
-| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 24.04 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04 + Ubuntu 24.04 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
 | `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | — |
 | `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
