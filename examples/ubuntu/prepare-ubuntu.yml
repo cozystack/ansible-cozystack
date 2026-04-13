@@ -133,22 +133,48 @@
         state: present
       when: ansible_distribution == 'Ubuntu'
 
-    - name: Load kernel modules at boot (containerd, Kubernetes, Kube-OVN)
-      ansible.builtin.copy:
-        dest: /etc/modules-load.d/cozystack.conf
-        mode: "0644"
-        content: "{{ (cozystack_kernel_modules_optional + cozystack_kernel_modules_required) | join('\n') }}\n"
-
-    - name: Load containerd overlay module (may be built-in)
+    - name: Try loading optional kernel modules (may be built-in or missing)
       community.general.modprobe:
         name: "{{ item }}"
       loop: "{{ cozystack_kernel_modules_optional }}"
-      failed_when: false  # overlay is usually built into the kernel
+      failed_when: false  # overlay is usually built-in; openvswitch may be absent on stripped kernels
+
+    - name: Check which optional kernel modules are present
+      ansible.builtin.stat:
+        path: "/sys/module/{{ item }}"
+      loop: "{{ cozystack_kernel_modules_optional }}"
+      register: _cozystack_optional_modules_stat
+
+    - name: Warn about unavailable optional kernel modules
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: optional kernel module '{{ item.item }}' is not available
+          on this host. Container runtimes (overlay) or Kube-OVN (openvswitch)
+          may not function. Install the matching linux-modules-extra package
+          or rebuild the kernel with the module enabled.
+      loop: "{{ _cozystack_optional_modules_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not (item.stat.exists | default(false))
 
     - name: Load required Kubernetes and Kube-OVN kernel modules
       community.general.modprobe:
         name: "{{ item }}"
       loop: "{{ cozystack_kernel_modules_required }}"
+
+    # Persist only optional modules that are actually present — otherwise
+    # systemd-modules-load.service fails on every boot for missing modules.
+    - name: Load kernel modules at boot (containerd, Kubernetes, Kube-OVN)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack.conf
+        mode: "0644"
+        content: "{{ (_cozystack_loaded_optional + cozystack_kernel_modules_required) | join('\n') }}\n"
+      vars:
+        _cozystack_loaded_optional: >-
+          {{ _cozystack_optional_modules_stat.results
+             | selectattr('stat.exists', 'equalto', true)
+             | map(attribute='item')
+             | list }}
 
     - name: Ensure multipath drop-in directory exists
       ansible.builtin.file:
