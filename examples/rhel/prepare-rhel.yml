@@ -314,6 +314,7 @@
           Set cozystack_enable_zfs: false to silence.
       when:
         - cozystack_enable_zfs | default(true) | bool
+        - "'uek' not in ansible_kernel"
         - _cozystack_zfs_modprobe is defined
         - _cozystack_zfs_modprobe.failed | default(false)
 

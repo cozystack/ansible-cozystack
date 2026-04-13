@@ -162,7 +162,7 @@ informational notice:
 | Ubuntu 22.04 / 24.04 | Automated | `zfsutils-linux` in main repo; kernel module ships in `linux-modules-extra-*` |
 | Debian 12+ | **Not automated** | `zfsutils-linux` lives in `contrib`; kernel module requires `zfs-dkms`. Enable contrib and install manually, or set `cozystack_enable_zfs: false`. |
 | RHEL 9 / Rocky 9 / Alma 9 (stock kernel) | Automated | OpenZFS release RPM via `cozystack_zfs_release_rpm_by_major` |
-| RHEL 10 (stock kernel) | **Fails fast** | OpenZFS has not yet published an el10 release RPM. Set `cozystack_enable_zfs: false` for now; once upstream publishes one, supply the URL from inventory via `cozystack_zfs_release_rpm_extra: {"10": "<url>"}`. |
+| RHEL 10 (stock kernel) | **Fails fast** when `cozystack_enable_zfs: true` (default). Skipped cleanly when set to `false`. | OpenZFS has not yet published an el10 release RPM. Set `cozystack_enable_zfs: false` for now; once upstream publishes one, supply the URL from inventory via `cozystack_zfs_release_rpm_extra: {"10": "<url>"}`. |
 | openSUSE Leap 15.6 / Tumbleweed / SLE | Automated | OBS `filesystems` repo; the playbook auto-detects the path segment |
 
 Other subsystem notes:
