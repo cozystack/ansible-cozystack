@@ -233,6 +233,18 @@
     # auto_import_keys: true) so the key source is visible in the
     # playbook and can be audited. rpm_key handles fetch + idempotent
     # import in one step, without relying on /etc/pki/rpm-gpg existing.
+    - name: Fail fast on unknown openSUSE/SLE distribution
+      ansible.builtin.fail:
+        msg: >-
+          Unrecognised ansible_distribution '{{ ansible_distribution }}'
+          for the SUSE-family ZFS OBS repo. The example playbook only
+          recognises 'openSUSE Leap', 'openSUSE Tumbleweed', and SLES.
+          Set cozystack_enable_zfs: false to skip ZFS, or override
+          cozystack_zfs_obs_path / cozystack_zfs_obs_repo from inventory.
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution not in ['openSUSE Leap', 'openSUSE Tumbleweed', 'SLES']
+
     - name: Import OBS filesystems signing key
       ansible.builtin.rpm_key:
         key: "{{ cozystack_zfs_obs_gpg_key }}"

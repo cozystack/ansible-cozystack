@@ -73,6 +73,8 @@ LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container com
 | --- | --- | --- |
 | `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` plus `kernel-modules-extra-{{ ansible_kernel }}` | `kernel-default-devel` (zypper resolves to running kernel — SUSE's NVR format differs from `uname -r`) |
 
+On Oracle Linux the playbook auto-detects the UEK kernel (`uek` substring in `ansible_kernel`) and installs `kernel-uek-devel-{{ ansible_kernel }}` / `kernel-uek-modules-extra-{{ ansible_kernel }}` instead. Oracle Linux is not on the validated-end-to-end list; this code path is retained best-effort for users who still run the example playbook there. ZFS automation skips on UEK kernels because OpenZFS does not publish kmod builds for UEK.
+
 #### Required: Multipath DRBD blacklist
 
 > **Silent failure if omitted.** `multipathd` defaults to grabbing any device matching common patterns including DRBD's `drbd*`. Once that happens LINSTOR cannot access its own volumes and volumes become unreadable after the next reboot.
@@ -160,7 +162,7 @@ informational notice:
 | Ubuntu 22.04 / 24.04 | Automated | `zfsutils-linux` in main repo; kernel module ships in `linux-modules-extra-*` |
 | Debian 12+ | **Not automated** | `zfsutils-linux` lives in `contrib`; kernel module requires `zfs-dkms`. Enable contrib and install manually, or set `cozystack_enable_zfs: false`. |
 | RHEL 9 / Rocky 9 / Alma 9 (stock kernel) | Automated | OpenZFS release RPM via `cozystack_zfs_release_rpm_by_major` |
-| RHEL 10 (stock kernel) | **Fails fast** | OpenZFS has not yet published an el10 release RPM. Add an entry to `cozystack_zfs_release_rpm_by_major` when upstream ships one, or set `cozystack_enable_zfs: false`. |
+| RHEL 10 (stock kernel) | **Fails fast** | OpenZFS has not yet published an el10 release RPM. Set `cozystack_enable_zfs: false` for now; once upstream publishes one, supply the URL from inventory via `cozystack_zfs_release_rpm_extra: {"10": "<url>"}`. |
 | openSUSE Leap 15.6 / Tumbleweed / SLE | Automated | OBS `filesystems` repo; the playbook auto-detects the path segment |
 
 Other subsystem notes:
@@ -338,6 +340,7 @@ vars to opt out of the corresponding prepare step:
 | `cozystack_enable_zfs` | `true` | Example playbooks: install ZFS userspace and load the module. Set `false` to skip. |
 | `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules. Set `false` to skip. |
 | `cozystack_flush_iptables` | `false` | Example playbooks: flush the iptables INPUT chain before k3s installs. Set `true` on Ubuntu/Debian cloud images (OCI/AWS/GCP) where the default INPUT chain ends with `REJECT icmp-host-prohibited` and blocks k3s inter-node ports 2380/6443. |
+| `cozystack_zfs_release_rpm_extra` | `{}` | `examples/rhel/` only: merged on top of the built-in `cozystack_zfs_release_rpm_by_major` dict, so you can add (or override) a single EL-major → OpenZFS release RPM entry from inventory without wiping the base dict. Example: `{"10": "https://zfsonlinux.org/epel/zfs-release-X-Y.el10.noarch.rpm"}` once upstream ships one. |
 
 ## Using with k3s
 

@@ -44,12 +44,22 @@
     # userspace packages are installed.
 
     # OpenZFS release RPM per RHEL major. OpenZFS publishes different
-    # release RPM versions for each EL major; maintain the mapping below
-    # manually and bump when OpenZFS rotates. See https://zfsonlinux.org/
-    # for current URLs. Add a RHEL 10 entry here when OpenZFS ships one.
-    cozystack_zfs_release_rpm_by_major:
+    # release RPM versions for each EL major; the mapping below is
+    # maintained manually and bumped when OpenZFS rotates. See
+    # https://zfsonlinux.org/ for current URLs.
+    #
+    # To add/override an entry (for example once OpenZFS publishes an
+    # el10 RPM), set `cozystack_zfs_release_rpm_extra` from inventory:
+    #   cozystack_zfs_release_rpm_extra:
+    #     "10": "https://zfsonlinux.org/epel/zfs-release-X-Y.el10.noarch.rpm"
+    # The user-supplied dict is merged on top of the built-in one, so
+    # overriding a single major does not wipe out the others.
+    cozystack_zfs_release_rpm_by_major_default:
       "8": "https://zfsonlinux.org/epel/zfs-release-2-3.el8.noarch.rpm"
       "9": "https://zfsonlinux.org/epel/zfs-release-2-8.el9.noarch.rpm"
+    cozystack_zfs_release_rpm_by_major: >-
+      {{ cozystack_zfs_release_rpm_by_major_default
+         | combine(cozystack_zfs_release_rpm_extra | default({})) }}
     cozystack_zfs_release_rpm: "{{ cozystack_zfs_release_rpm_by_major[ansible_distribution_major_version] | default('') }}"
 
     # OpenZFS project GPG key, imported before installing the release RPM
