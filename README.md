@@ -2,11 +2,15 @@
 
 Install [Cozystack](https://cozystack.io) on generic Kubernetes clusters (k3s, kubeadm, RKE2).
 
-Tested on:
+Supported targets:
 
-- **Ubuntu 22.04 / 24.04, Debian 12** — `examples/ubuntu/`
-- **RHEL 8+ / CentOS Stream 8+ / Rocky / Alma** — `examples/rhel/`
-- **openSUSE / SLE** — `examples/suse/`
+| Example playbook | Distributions | Validated on real hosts |
+| --- | --- | --- |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22/24 on OCI; Debian 12 on Lima (prepare only) |
+| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | Oracle Linux 9/10 UEK on OCI; Rocky 9/10 on Lima (prepare only) |
+| `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | openSUSE Leap 15.6 on Lima (prepare only) |
+
+See **Node Prerequisites → Known limitations** below for per-distro gotchas (UEK kernel, Debian ZFS, RHEL 10 OpenZFS, cloud iptables).
 
 Deploys the Cozystack operator and Platform Package using the
 `kubernetes.core.helm` module with automatic Helm and helm-diff
