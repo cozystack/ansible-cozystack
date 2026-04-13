@@ -4,11 +4,11 @@ Install [Cozystack](https://cozystack.io) on generic Kubernetes clusters (k3s, k
 
 Supported targets:
 
-| Example playbook | Distributions | Validated on real hosts |
+| Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
-| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22/24 on OCI; Debian 12 on Lima (prepare only) |
-| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | Oracle Linux 9/10 UEK on OCI; Rocky 9/10 on Lima (prepare only) |
-| `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | openSUSE Leap 15.6 on Lima (prepare only) |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04 |
+| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | Oracle Linux 9, Oracle Linux 10 (UEK kernel) |
+| `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
 See **Node Prerequisites → Known limitations** below for per-distro gotchas (UEK kernel, Debian ZFS, RHEL 10 OpenZFS, cloud iptables).
 
