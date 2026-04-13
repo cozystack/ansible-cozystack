@@ -9,12 +9,15 @@ Node prerequisites: comprehensive audit and install in examples.
 
 - Example prepare playbooks now install the full set of node prerequisites.
   Base additions: ``lvm2``, ``thin-provisioning-tools`` /
-  ``device-mapper-persistent-data``, and kernel headers pinned to the
-  running kernel (``linux-headers-{{ ansible_kernel }}`` on Ubuntu,
-  ``kernel-devel-{{ ansible_kernel }}`` on RHEL,
-  ``kernel-default-devel-{{ ansible_kernel }}`` on openSUSE). On Ubuntu
-  the playbook also installs ``linux-modules-extra-{{ ansible_kernel }}``
-  which provides ``openvswitch`` and ``geneve`` on cloud/minimal kernels.
+  ``device-mapper-persistent-data``, and kernel headers. Ubuntu and RHEL
+  pin headers to the running kernel (``linux-headers-{{ ansible_kernel }}``
+  / ``kernel-devel-{{ ansible_kernel }}``). openSUSE installs
+  ``kernel-default-devel`` unversioned — SUSE's NVR format differs from
+  ``uname -r`` so zypper rejects the version-suffixed form, but zypper
+  resolves the unversioned name to the version matching the running
+  kernel. On Ubuntu the playbook also installs
+  ``linux-modules-extra-{{ ansible_kernel }}`` which provides
+  ``openvswitch`` and ``geneve`` on cloud/minimal kernels.
   Debian 12 remains a supported target for ``prepare-ubuntu.yml`` and is
   validated end-to-end, but ZFS automation is Ubuntu-only: on Debian the
   playbook skips the ZFS block (with a visible notice), since ``zfsutils``
@@ -54,13 +57,6 @@ Node prerequisites: comprehensive audit and install in examples.
   required because OpenZFS has not yet published an el10 release RPM;
   ``prepare-rhel.yml`` fails fast with a clear message until an entry is
   added to ``cozystack_zfs_release_rpm_by_major``.
-
-v1.2.2
-======
-
-Synced with Cozystack v1.2.2.
-
-- Bump ``cozystack_chart_version`` to ``1.2.2``
 
 v1.1.2
 ======

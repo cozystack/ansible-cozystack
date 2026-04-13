@@ -314,14 +314,22 @@
       when: cozystack_enable_kubevirt | default(true) | bool
 
     # Try loading the CPU-vendor KVM module; unsupported CPU, nested virt
-    # disabled in BIOS, or container host → rc != 0. Record the outcome so
-    # the persisted modules-load.d file only lists modules that actually
-    # loaded (otherwise systemd-modules-load fails on every boot).
+    # disabled in BIOS, or container host → modprobe fails. Tolerate the
+    # failure here and check /sys/module afterwards so the persisted
+    # modules-load.d file only lists modules that actually loaded
+    # (otherwise systemd-modules-load fails on every boot).
     - name: Load CPU-vendor KVM module now (best-effort)
-      ansible.builtin.command: "modprobe {{ _cozystack_kvm_module }}"
-      register: _cozystack_kvm_modprobe
-      changed_when: _cozystack_kvm_modprobe.rc == 0
+      community.general.modprobe:
+        name: "{{ _cozystack_kvm_module }}"
       failed_when: false
+      when:
+        - cozystack_enable_kubevirt | default(true) | bool
+        - (_cozystack_kvm_module | default('')) | length > 0
+
+    - name: Check whether CPU-vendor KVM module is loaded
+      ansible.builtin.stat:
+        path: "/sys/module/{{ _cozystack_kvm_module }}"
+      register: _cozystack_kvm_module_stat
       when:
         - cozystack_enable_kubevirt | default(true) | bool
         - (_cozystack_kvm_module | default('')) | length > 0
@@ -333,7 +341,7 @@
         content: |
           vhost_net
           tun
-          {% if (_cozystack_kvm_modprobe.rc | default(1)) == 0 %}
+          {% if _cozystack_kvm_module_stat is defined and (_cozystack_kvm_module_stat.stat.exists | default(false)) %}
           {{ _cozystack_kvm_module }}
           {% endif %}
       when: cozystack_enable_kubevirt | default(true) | bool
