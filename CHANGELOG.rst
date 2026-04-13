@@ -15,9 +15,12 @@ Node prerequisites: comprehensive audit and install in examples.
   ``kernel-default-devel-{{ ansible_kernel }}`` on openSUSE). On Ubuntu
   the playbook also installs ``linux-modules-extra-{{ ansible_kernel }}``
   which provides ``openvswitch`` and ``geneve`` on cloud/minimal kernels.
-  ``prepare-ubuntu.yml`` is now Ubuntu-only — Debian requires contrib +
-  ``zfs-dkms`` for ZFS and is no longer claimed as a supported target
-  for this example.
+  Debian 12 remains a supported target for ``prepare-ubuntu.yml`` and is
+  validated end-to-end, but ZFS automation is Ubuntu-only: on Debian the
+  playbook skips the ZFS block (with a visible notice), since ``zfsutils``
+  lives in ``contrib`` and the kernel module requires ``zfs-dkms``. Users
+  who want ZFS on Debian must enable contrib + install ``zfs-dkms``
+  manually, or set ``cozystack_enable_zfs: false``.
 - Kernel modules for containerd, Kubernetes bridge networking, and Kube-OVN
   loaded via ``/etc/modules-load.d/cozystack.conf``: ``overlay``,
   ``br_netfilter``, ``openvswitch``, ``geneve``, ``ip_tables``, ``iptable_nat``.
@@ -46,7 +49,18 @@ Node prerequisites: comprehensive audit and install in examples.
   and is also required for k3s kube-proxy replacement.
 - Validation matrix extended. End-to-end tested on OCI with 3-node
   multi-master k3s + 87/87 Cozystack HelmReleases Ready: Ubuntu 22.04,
-  Ubuntu 24.04, Debian 12, Rocky Linux 10.
+  Ubuntu 24.04, Debian 12, Rocky Linux 10. For Rocky 10 / Alma 10 (and
+  other RHEL 10 rebuilds) ``cozystack_enable_zfs: false`` is currently
+  required because OpenZFS has not yet published an el10 release RPM;
+  ``prepare-rhel.yml`` fails fast with a clear message until an entry is
+  added to ``cozystack_zfs_release_rpm_by_major``.
+
+v1.2.2
+======
+
+Synced with Cozystack v1.2.2.
+
+- Bump ``cozystack_chart_version`` to ``1.2.2``
 
 v1.1.2
 ======

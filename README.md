@@ -7,7 +7,7 @@ Supported targets:
 | Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
 | `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04, Debian 12 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
-| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | Rocky 10 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
+| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | Rocky 10 on OCI: 3-node multi-master, 87/87 HelmReleases Ready (`cozystack_enable_zfs: false` required — see Known limitations) |
 | `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
 Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.

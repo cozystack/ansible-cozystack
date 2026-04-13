@@ -324,21 +324,14 @@
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
     - name: Detect CPU vendor for KVM module selection
       ansible.builtin.set_fact:
-        _cozystack_kvm_module: "{{ 'kvm_intel' if 'GenuineIntel' in (ansible_processor | join(' ')) else 'kvm_amd' if 'AuthenticAMD' in (ansible_processor | join(' ')) else '' }}"
+        _cozystack_kvm_module: >-
+          {{ 'kvm_intel' if 'GenuineIntel' in (ansible_processor | join(' '))
+             else 'kvm_amd' if 'AuthenticAMD' in (ansible_processor | join(' '))
+             else '' }}
       when: cozystack_enable_kubevirt | default(true) | bool
 
-    - name: Load KubeVirt kernel modules at boot
-      ansible.builtin.copy:
-        dest: /etc/modules-load.d/cozystack-kubevirt.conf
-        mode: "0644"
-        content: |
-          vhost_net
-          tun
-          {% if (_cozystack_kvm_module | default('')) | length > 0 %}
-          {{ _cozystack_kvm_module }}
-          {% endif %}
-      when: cozystack_enable_kubevirt | default(true) | bool
-
+    # Required KubeVirt modules must load; if vhost_net or tun is unavailable
+    # (custom/stripped kernel) the playbook fails here rather than proceed.
     - name: Load required KubeVirt kernel modules now
       community.general.modprobe:
         name: "{{ item }}"
@@ -347,13 +340,30 @@
         - tun
       when: cozystack_enable_kubevirt | default(true) | bool
 
-    - name: Load CPU-vendor KVM module now
-      community.general.modprobe:
-        name: "{{ _cozystack_kvm_module }}"
+    # Try loading the CPU-vendor KVM module; unsupported CPU, nested virt
+    # disabled in BIOS, or container host → rc != 0. Record the outcome so
+    # the persisted modules-load.d file only lists modules that actually
+    # loaded (otherwise systemd-modules-load fails on every boot).
+    - name: Load CPU-vendor KVM module now (best-effort)
+      ansible.builtin.command: "modprobe {{ _cozystack_kvm_module }}"
+      register: _cozystack_kvm_modprobe
+      changed_when: _cozystack_kvm_modprobe.rc == 0
+      failed_when: false
       when:
         - cozystack_enable_kubevirt | default(true) | bool
         - (_cozystack_kvm_module | default('')) | length > 0
-      failed_when: false  # unsupported CPU / virtualization disabled in BIOS
+
+    - name: Persist KubeVirt kernel modules for boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-kubevirt.conf
+        mode: "0644"
+        content: |
+          vhost_net
+          tun
+          {% if (_cozystack_kvm_modprobe.rc | default(1)) == 0 %}
+          {{ _cozystack_kvm_module }}
+          {% endif %}
+      when: cozystack_enable_kubevirt | default(true) | bool
 
     - name: Remove KubeVirt modules-load drop-in when disabled
       ansible.builtin.file:
