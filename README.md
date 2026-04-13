@@ -4,13 +4,13 @@ Install [Cozystack](https://cozystack.io) on generic Kubernetes clusters (k3s, k
 
 Supported targets:
 
-| Example playbook | Distributions | Node preparation | k3s multi-node |
-| --- | --- | --- | --- |
-| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04 on OCI | — *(see note)* |
-| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | Oracle Linux 9/10 UEK on OCI | Oracle Linux 9/10 UEK on OCI |
-| `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — | — |
+| Example playbook | Distributions | Validated end-to-end |
+| --- | --- | --- |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 24.04 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
+| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | — |
+| `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
-Fully-green Cozystack platform (kube-ovn up, all HelmReleases Ready) is not yet recorded on any distro in the current validation set — kube-ovn multi-master on OCI needs further tuning. On OCI Ubuntu images, k3s agent join over port 2380 is also blocked by a non-iptables filter even after `cozystack_flush_iptables: true`; root cause still under investigation. See **Node Prerequisites → Known limitations** below for per-distro gotchas (UEK kernel, Debian ZFS, RHEL 10 OpenZFS, cloud iptables).
+Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.
 
 Deploys the Cozystack operator and Platform Package using the
 `kubernetes.core.helm` module with automatic Helm and helm-diff
