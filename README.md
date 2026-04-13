@@ -7,7 +7,7 @@ Supported targets:
 | Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
 | `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04 + Ubuntu 24.04 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
-| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10, Oracle Linux 9/10 | — |
+| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | — |
 | `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
 Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.
@@ -161,7 +161,6 @@ informational notice:
 | Debian 12+ | **Not automated** | `zfsutils-linux` lives in `contrib`; kernel module requires `zfs-dkms`. Enable contrib and install manually, or set `cozystack_enable_zfs: false`. |
 | RHEL 9 / Rocky 9 / Alma 9 (stock kernel) | Automated | OpenZFS release RPM via `cozystack_zfs_release_rpm_by_major` |
 | RHEL 10 (stock kernel) | **Fails fast** | OpenZFS has not yet published an el10 release RPM. Add an entry to `cozystack_zfs_release_rpm_by_major` when upstream ships one, or set `cozystack_enable_zfs: false`. |
-| Oracle Linux 9/10 (UEK kernel) | **Not automated** | OpenZFS publishes kmod builds only for the stock RHEL kernel, not for Oracle's UEK. Switch the host to the `kernel` package (RHEL-compat) and reboot, or set `cozystack_enable_zfs: false`. |
 | openSUSE Leap 15.6 / Tumbleweed / SLE | Automated | OBS `filesystems` repo; the playbook auto-detects the path segment |
 
 Other subsystem notes:
