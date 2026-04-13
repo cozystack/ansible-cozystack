@@ -6,8 +6,8 @@ Supported targets:
 
 | Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
-| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04 + Ubuntu 24.04 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
-| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | — |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04, Debian 12 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
+| `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | Rocky 10 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
 | `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
 Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.
@@ -166,6 +166,7 @@ informational notice:
 Other subsystem notes:
 
 - **Cloud providers (Ubuntu on OCI, AWS, GCP):** stock Ubuntu cloud images ship an iptables INPUT chain that ends with `REJECT icmp-host-prohibited`, which blocks k3s ports 2380/6443 between nodes. Set `cozystack_flush_iptables: true` in your inventory so the prepare playbook flushes the INPUT chain before k3s installs. Oracle Linux images on OCI do not have this restriction out of the box.
+- **Rocky 10 / Alma 10 (and other RHEL 10 rebuilds):** the `iptables` userspace binary is not installed by default. `examples/rhel/prepare-rhel.yml` installs `iptables-nft` so the `cozystack_flush_iptables` task and k3s kube-proxy replacement have a working `iptables` wrapper over nftables.
 - **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.
 - **Piraeus DRBD loader + staged kernel updates:** kernel headers must match the *running* kernel. The playbooks pin `linux-headers-{{ ansible_kernel }}` / `kernel-devel-{{ ansible_kernel }}` for this reason. On openSUSE/SLE, zypper rejects the version suffix because SUSE's NVR format differs from `uname -r`; `kernel-default-devel` is used unversioned and zypper resolves it to the installed kernel. Reboot after any kernel update before running the playbook.
 

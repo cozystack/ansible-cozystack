@@ -39,6 +39,14 @@ Node prerequisites: comprehensive audit and install in examples.
   are installed.
 - README now documents every node prerequisite per subsystem with exact
   package names for Ubuntu 22.04/24.04, RHEL 9, and openSUSE Leap 15.6.
+- ``prepare-rhel.yml`` now installs ``iptables-nft``. Rocky 10 / Alma 10 (and
+  other RHEL 10 rebuilds) do not ship the ``iptables`` userspace binary by
+  default, which made the ``cozystack_flush_iptables`` task fail on cloud
+  images. ``iptables-nft`` provides an ``iptables`` wrapper over nftables
+  and is also required for k3s kube-proxy replacement.
+- Validation matrix extended. End-to-end tested on OCI with 3-node
+  multi-master k3s + 87/87 Cozystack HelmReleases Ready: Ubuntu 22.04,
+  Ubuntu 24.04, Debian 12, Rocky Linux 10.
 
 v1.1.2
 ======

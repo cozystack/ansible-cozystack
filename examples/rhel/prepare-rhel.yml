@@ -16,6 +16,10 @@
       - nfs-utils
       - iscsi-initiator-utils
       - device-mapper-multipath
+      # iptables userspace (nftables backend on RHEL 8+). Required by k3s
+      # kube-proxy replacement and by the optional cozystack_flush_iptables
+      # task below. Not installed by default on RHEL 10 / Rocky 10 / Alma 10.
+      - iptables-nft
       # LINSTOR LVM/thin provisioning (required by Cozystack storage)
       - lvm2
       - device-mapper-persistent-data
