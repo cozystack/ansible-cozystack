@@ -162,6 +162,7 @@ informational notice:
 
 Other subsystem notes:
 
+- **Cloud providers (Ubuntu on OCI, AWS, GCP):** stock Ubuntu cloud images ship an iptables INPUT chain that ends with `REJECT icmp-host-prohibited`, which blocks k3s ports 2380/6443 between nodes. Set `cozystack_flush_iptables: true` in your inventory so the prepare playbook flushes the INPUT chain before k3s installs. Oracle Linux images on OCI do not have this restriction out of the box.
 - **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.
 - **Piraeus DRBD loader + staged kernel updates:** kernel headers must match the *running* kernel. The playbooks pin `linux-headers-{{ ansible_kernel }}` / `kernel-devel-{{ ansible_kernel }}` for this reason. On openSUSE/SLE, zypper rejects the version suffix because SUSE's NVR format differs from `uname -r`; `kernel-default-devel` is used unversioned and zypper resolves it to the installed kernel. Reboot after any kernel update before running the playbook.
 
