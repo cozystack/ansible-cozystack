@@ -132,7 +132,7 @@ The `openvswitch` kernel module is in the upstream kernel since 3.3; no OVS user
 | Distribution | Package | Repo |
 | --- | --- | --- |
 | Ubuntu 22.04 / 24.04 | `zfsutils-linux` | Default repos (kernel module ships in `linux-modules-extra-*`) |
-| RHEL 9 / Rocky 9 / Alma 9 | `zfs` | OpenZFS release RPM — prepare playbook imports the GPG key and installs it automatically |
+| RHEL 8+ / Rocky 8+ / Alma 8+ / CentOS Stream 8+ | `zfs` | OpenZFS release RPM — prepare playbook imports the GPG key and installs it automatically. No release RPM is yet published for EL10; set `cozystack_enable_zfs: false` on Rocky 10 / Alma 10 until upstream ships one. |
 | openSUSE Leap 15.6 / SLE 15 | `zfs` | OBS `filesystems` repo — prepare playbook imports the repo key and adds it automatically |
 
 #### Enabled by default: KubeVirt virtualization
@@ -337,6 +337,7 @@ vars to opt out of the corresponding prepare step:
 | --- | --- | --- |
 | `cozystack_enable_zfs` | `true` | Example playbooks: install ZFS userspace and load the module. Set `false` to skip. |
 | `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules. Set `false` to skip. |
+| `cozystack_flush_iptables` | `false` | Example playbooks: flush the iptables INPUT chain before k3s installs. Set `true` on Ubuntu/Debian cloud images (OCI/AWS/GCP) where the default INPUT chain ends with `REJECT icmp-host-prohibited` and blocks k3s inter-node ports 2380/6443. |
 
 ## Using with k3s
 
