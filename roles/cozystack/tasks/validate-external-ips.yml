@@ -1,0 +1,22 @@
+---
+# Validate that each entry in cozystack_external_ips is a valid IP address.
+# Included from main.yml and tests.
+- name: Validate cozystack_external_ips is a list
+  ansible.builtin.assert:
+    that:
+      - cozystack_external_ips is sequence
+      - cozystack_external_ips is not string
+      - cozystack_external_ips is not mapping
+    fail_msg: >-
+      cozystack_external_ips must be a list of IP address strings.
+      Got type {{ cozystack_external_ips | type_debug }}.
+
+- name: Validate each external IP is a valid address
+  ansible.builtin.assert:
+    that:
+      - item is cozystack.installer.is_ip_address
+    fail_msg: >-
+      '{{ item }}' is not a valid IP address in cozystack_external_ips.
+      Each entry must be a valid IPv4 or IPv6 address.
+  loop: "{{ cozystack_external_ips }}"
+  when: cozystack_external_ips | length > 0

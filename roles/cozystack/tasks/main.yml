@@ -13,6 +13,12 @@
   ansible.builtin.include_tasks: compute-master-nodes.yml
   when: cozystack_create_platform_package
 
+- name: Validate external IP addresses
+  ansible.builtin.include_tasks: validate-external-ips.yml
+  when:
+    - cozystack_create_platform_package
+    - cozystack_external_ips | length > 0
+
 - name: Set architecture for Helm download
   ansible.builtin.set_fact:
     _cozystack_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"

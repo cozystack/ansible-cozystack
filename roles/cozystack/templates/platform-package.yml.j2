@@ -28,4 +28,7 @@ spec:
         publishing:
           host: {{ cozystack_root_host | to_json }}
           apiServerEndpoint: {{ _cozystack_api_endpoint | to_json }}
+{% if cozystack_external_ips | length > 0 %}
+          externalIPs: {{ cozystack_external_ips | to_json }}
+{% endif %}
 {% endif %}

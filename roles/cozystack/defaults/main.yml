@@ -53,6 +53,11 @@ cozystack_platform_variant: "isp-full-generic"
 # Leave empty to skip publishing config in the Platform Package
 cozystack_root_host: ""
 
+# External IPs for ingress-nginx Service (type: LoadBalancer).
+# Required on platforms without a native LB (cloud VMs, bare metal).
+# Each entry must be a valid IPv4 or IPv6 address.
+cozystack_external_ips: []
+
 # Comma-separated control-plane node IPs for kube-ovn RAFT consensus.
 # Empty = auto-detect from 'server' inventory group host keys.
 cozystack_master_nodes: ""
