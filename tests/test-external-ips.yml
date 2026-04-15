@@ -1,0 +1,118 @@
+---
+# Verify that cozystack_external_ips renders correctly in the Platform Package
+# template and that IP validation rejects invalid entries.
+- name: Test external IPs rendering in Platform Package template
+  hosts: server[0]
+  gather_facts: false
+  pre_tasks:
+    - name: Set template defaults when not defined by inventory
+      ansible.builtin.set_fact:
+        cozystack_master_nodes: "{{ cozystack_master_nodes | default('') }}"
+        cozystack_api_server_host: "{{ cozystack_api_server_host | default('127.0.0.1') }}"
+        cozystack_api_server_port: "{{ cozystack_api_server_port | default('6443') }}"
+        cozystack_namespace: "{{ cozystack_namespace | default('cozy-system') }}"
+        cozystack_platform_variant: "{{ cozystack_platform_variant | default('isp-full-generic') }}"
+        cozystack_root_host: "{{ cozystack_root_host | default('') }}"
+        cozystack_external_ips: "{{ cozystack_external_ips | default([]) }}"
+        cozystack_pod_cidr: "{{ cozystack_pod_cidr | default('10.42.0.0/16') }}"
+        cozystack_pod_gateway: "{{ cozystack_pod_gateway | default('10.42.0.1') }}"
+        cozystack_svc_cidr: "{{ cozystack_svc_cidr | default('10.43.0.0/16') }}"
+        cozystack_join_cidr: "{{ cozystack_join_cidr | default('100.64.0.0/16') }}"
+  tasks:
+    - name: Include role master-node computation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/compute-master-nodes.yml"
+
+    - name: Include external IP validation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/validate-external-ips.yml"
+      when: cozystack_external_ips | length > 0
+
+    - name: Construct API server endpoint
+      ansible.builtin.set_fact:
+        _cozystack_api_endpoint: "https://{{ cozystack_api_server_host }}:{{ cozystack_api_server_port }}"
+
+    - name: Render Platform Package template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/cozystack/templates/platform-package.yml.j2"
+        dest: /tmp/cozystack-test-external-ips.yml
+        mode: "0600"
+
+    - name: Read rendered manifest
+      ansible.builtin.slurp:
+        src: /tmp/cozystack-test-external-ips.yml
+      register: _rendered_manifest
+
+    - name: Assert externalIPs is present when external IPs are set
+      ansible.builtin.assert:
+        that:
+          - "'externalIPs' in _rendered_content"
+          - "(cozystack_external_ips | to_json) in _rendered_content"
+        fail_msg: >-
+          Rendered template does not contain expected externalIPs.
+          Expected {{ cozystack_external_ips | to_json }} in output.
+      vars:
+        _rendered_content: "{{ _rendered_manifest.content | b64decode }}"
+      when: cozystack_external_ips | length > 0
+
+    - name: Show rendered template (debug)
+      ansible.builtin.debug:
+        msg: "{{ _rendered_manifest.content | b64decode }}"
+
+    - name: Clean up test manifest
+      ansible.builtin.file:
+        path: /tmp/cozystack-test-external-ips.yml
+        state: absent
+      changed_when: false
+
+- name: Test empty external IPs omits externalIPs from template
+  hosts: server[0]
+  gather_facts: false
+  pre_tasks:
+    - name: Set defaults with empty external IPs
+      ansible.builtin.set_fact:
+        cozystack_master_nodes: "{{ cozystack_master_nodes | default('') }}"
+        cozystack_api_server_host: "{{ cozystack_api_server_host | default('127.0.0.1') }}"
+        cozystack_api_server_port: "{{ cozystack_api_server_port | default('6443') }}"
+        cozystack_namespace: "{{ cozystack_namespace | default('cozy-system') }}"
+        cozystack_platform_variant: "{{ cozystack_platform_variant | default('isp-full-generic') }}"
+        cozystack_root_host: "cozy.example.com"
+        cozystack_external_ips: []
+        cozystack_pod_cidr: "{{ cozystack_pod_cidr | default('10.42.0.0/16') }}"
+        cozystack_pod_gateway: "{{ cozystack_pod_gateway | default('10.42.0.1') }}"
+        cozystack_svc_cidr: "{{ cozystack_svc_cidr | default('10.43.0.0/16') }}"
+        cozystack_join_cidr: "{{ cozystack_join_cidr | default('100.64.0.0/16') }}"
+  tasks:
+    - name: Include role master-node computation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../roles/cozystack/tasks/compute-master-nodes.yml"
+
+    - name: Construct API server endpoint
+      ansible.builtin.set_fact:
+        _cozystack_api_endpoint: "https://{{ cozystack_api_server_host }}:{{ cozystack_api_server_port }}"
+
+    - name: Render Platform Package template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/cozystack/templates/platform-package.yml.j2"
+        dest: /tmp/cozystack-test-external-ips-empty.yml
+        mode: "0600"
+
+    - name: Read rendered manifest
+      ansible.builtin.slurp:
+        src: /tmp/cozystack-test-external-ips-empty.yml
+      register: _rendered_manifest_empty
+
+    - name: Assert externalIPs is NOT present when list is empty
+      ansible.builtin.assert:
+        that:
+          - "'externalIPs' not in _rendered_content"
+        fail_msg: >-
+          Rendered template should NOT contain externalIPs when list is empty.
+      vars:
+        _rendered_content: "{{ _rendered_manifest_empty.content | b64decode }}"
+
+    - name: Clean up test manifest
+      ansible.builtin.file:
+        path: /tmp/cozystack-test-external-ips-empty.yml
+        state: absent
+      changed_when: false
