@@ -322,6 +322,8 @@ Runs on `server[0]` only.
 | `cozystack_create_platform_package` | `true` | Create Platform Package CR after install |
 | `cozystack_platform_variant` | `isp-full-generic` | Platform variant: default, isp-full, isp-hosted, isp-full-generic |
 | `cozystack_root_host` | `""` | Domain for Cozystack services (empty = skip publishing) |
+| `cozystack_external_ips` | `[]` | List of external IPs for ingress-nginx Service. Required on platforms without a native LB (cloud VMs, bare metal). Each entry must be a valid IPv4/IPv6 address. |
+| `cozystack_tenant_root_ingress` | `false` | Enable ingress on the root tenant. When `true`, patches the root Tenant CR after Platform Package apply to create IngressClass and ingress-nginx controller. |
 | `cozystack_pod_cidr` | `10.42.0.0/16` | Pod CIDR for Platform Package |
 | `cozystack_pod_gateway` | `10.42.0.1` | Pod gateway |
 | `cozystack_svc_cidr` | `10.43.0.0/16` | Service CIDR |

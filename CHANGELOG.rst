@@ -38,6 +38,15 @@ Synced with Cozystack v1.1.3.
 Unreleased
 ==========
 
+- New variable ``cozystack_external_ips`` (list, default ``[]``): external
+  IP addresses for ingress-nginx Service ``externalIPs``. Required on
+  ``isp-full-generic`` platform variant when nodes lack a native load
+  balancer (cloud VMs, bare metal).
+- New variable ``cozystack_tenant_root_ingress`` (bool, default ``false``):
+  when enabled, patches the root Tenant CR to set ``spec.ingress: true``
+  after Platform Package apply, creating the ``tenant-root`` IngressClass
+  and ingress-nginx controller pods.
+
 Node prerequisites: comprehensive audit and install in examples.
 
 - Example prepare playbooks now install the full set of node prerequisites.

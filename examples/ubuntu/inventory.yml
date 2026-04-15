@@ -38,6 +38,13 @@ cluster:
     cozystack_root_host: "cozy.example.com"
     cozystack_platform_variant: "isp-full-generic"
 
+    # External IPs for ingress-nginx (required on cloud VMs without native LB)
+    # cozystack_external_ips:
+    #   - "203.0.113.10"
+
+    # Enable ingress on root tenant (creates IngressClass + controller)
+    # cozystack_tenant_root_ingress: true
+
     # Extra k3s flags (used in prepare-ubuntu.yml)
     cozystack_k3s_extra_args: "--tls-san=203.0.113.10"
 
