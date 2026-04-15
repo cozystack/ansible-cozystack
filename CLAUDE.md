@@ -5,11 +5,12 @@ from the code.
 
 ## Release strategy
 
-- `galaxy.yml` version **tracks the upstream Cozystack chart version** (the
-  value in `roles/cozystack/defaults/main.yml:cozystack_chart_version`).
+- Collection version is **inherited from `cozystack/cozystack`** — it
+  tracks the upstream Cozystack chart version (the value in
+  `roles/cozystack/defaults/main.yml:cozystack_chart_version`).
 - Do **NOT** bump the collection version just because a PR adds features
-  or fixes bugs. The collection version moves only when upstream Cozystack
-  releases a new chart version.
+  or fixes bugs. The collection version moves only when upstream
+  `cozystack/cozystack` releases a new chart version.
 - Between upstream releases, changes accumulate on `main`. Users pin to
   git tags for stable installs; they reference `main` if they want the
   current feature set.
