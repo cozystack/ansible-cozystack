@@ -3,7 +3,12 @@
 # This playbook installs required packages, configures kernel parameters,
 # and sets k3s server arguments compatible with k3s.orchestration collection.
 #
-# Works on both Ubuntu and Debian (same packages and apt module).
+# Targets Ubuntu 22.04+ / 24.04 and Debian 12. Distro-specific parts:
+# - linux-modules-extra is only installed on Ubuntu (ships openvswitch
+#   and geneve on cloud/minimal kernels). Debian bundles these in the
+#   base kernel image.
+# - ZFS automation is Ubuntu-only. Debian needs contrib + zfs-dkms set
+#   up manually; set cozystack_enable_zfs: false to skip.
 #
 # Run before k3s deployment: ansible-playbook prepare-ubuntu.yml
 
@@ -11,11 +16,54 @@
   hosts: cluster
   become: true
   vars:
-    # Packages required by Cozystack (storage backends)
+    # Packages required by Cozystack on every node.
+    # See README "Node Prerequisites" for what each is for.
     cozystack_packages:
+      # Storage backends: NFS, iSCSI, Multipath
       - nfs-common
       - open-iscsi
       - multipath-tools
+      # LINSTOR LVM/thin provisioning (required by Cozystack storage)
+      - lvm2
+      - thin-provisioning-tools
+      # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime.
+      # Pin to ansible_kernel so headers match the running kernel.
+      - "linux-headers-{{ ansible_kernel }}"
+
+    # Ubuntu-only: linux-modules-extra-* ships openvswitch and geneve
+    # on cloud/minimal kernels. Debian includes these in its base
+    # kernel image and has no such split package.
+    cozystack_ubuntu_extra_packages:
+      - "linux-modules-extra-{{ ansible_kernel }}"
+
+    # Opt-out toggles are intentionally not defined here so they can be
+    # overridden from inventory. Each task references them via
+    # `| default(true)`. Set cozystack_enable_zfs: false or
+    # cozystack_enable_kubevirt: false in your inventory to skip.
+    #
+    # ZFS: installs zfsutils-linux. Ubuntu 22.04+ ships the ZFS kernel
+    # module via linux-modules-extra-* (pulled in above). On Debian
+    # zfsutils-linux is in contrib AND the kernel module requires
+    # zfs-dkms; this example does not automate Debian ZFS — set
+    # cozystack_enable_zfs: false and install manually.
+    #
+    # KubeVirt: loads vhost_net, tun, and kvm_intel or kvm_amd kernel
+    # modules. QEMU and libvirt run inside KubeVirt pods, so no host
+    # userspace packages are installed.
+
+    # Optional: modules that may be compiled into the kernel on some
+    # distros. modprobe failures here are tolerated.
+    cozystack_kernel_modules_optional:
+      - overlay
+      - openvswitch
+
+    # Required kernel modules. If any of these fails to load the playbook
+    # stops — the next steps (sysctl, Kube-OVN) depend on them.
+    cozystack_kernel_modules_required:
+      - br_netfilter
+      - geneve
+      - ip_tables
+      - iptable_nat
 
     # Kernel parameters for Cozystack
     cozystack_sysctl_params:
@@ -26,6 +74,9 @@
       - { name: fs.aio-max-nr, value: "1048576" }
       - { name: net.ipv4.ip_forward, value: "1" }
       - { name: net.ipv4.conf.all.forwarding, value: "1" }
+      - { name: net.ipv6.conf.all.forwarding, value: "1" }
+      - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+      - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
       - { name: vm.swappiness, value: "1" }
 
     # k3s server arguments required by Cozystack.
@@ -45,6 +96,13 @@
     cozystack_k3s_server_config_yaml: |
       cluster-cidr: 10.42.0.0/16
       service-cidr: 10.43.0.0/16
+
+  handlers:
+    - name: Restart multipathd
+      ansible.builtin.systemd:
+        name: multipathd
+        state: restarted
+      failed_when: false  # tolerated: same reason as the enable task below
 
   tasks:
     - name: Create k3s_cluster group for k3s.orchestration
@@ -68,6 +126,73 @@
         name: "{{ cozystack_packages }}"
         state: present
         update_cache: true
+
+    - name: Install Ubuntu-only extra kernel modules
+      ansible.builtin.apt:
+        name: "{{ cozystack_ubuntu_extra_packages }}"
+        state: present
+      when: ansible_distribution == 'Ubuntu'
+
+    - name: Try loading optional kernel modules (may be built-in or missing)
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop: "{{ cozystack_kernel_modules_optional }}"
+      failed_when: false  # overlay is usually built-in; openvswitch may be absent on stripped kernels
+
+    - name: Check which optional kernel modules are present
+      ansible.builtin.stat:
+        path: "/sys/module/{{ item }}"
+      loop: "{{ cozystack_kernel_modules_optional }}"
+      register: _cozystack_optional_modules_stat
+
+    - name: Warn about unavailable optional kernel modules
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: optional kernel module '{{ item.item }}' is not available
+          on this host. Container runtimes (overlay) or Kube-OVN (openvswitch)
+          may not function. Install the matching linux-modules-extra package
+          or rebuild the kernel with the module enabled.
+      loop: "{{ _cozystack_optional_modules_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not (item.stat.exists | default(false))
+
+    - name: Load required Kubernetes and Kube-OVN kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop: "{{ cozystack_kernel_modules_required }}"
+
+    # Persist only optional modules that are actually present — otherwise
+    # systemd-modules-load.service fails on every boot for missing modules.
+    - name: Load kernel modules at boot (containerd, Kubernetes, Kube-OVN)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack.conf
+        mode: "0644"
+        content: "{{ (_cozystack_loaded_optional + cozystack_kernel_modules_required) | join('\n') }}\n"
+      vars:
+        _cozystack_loaded_optional: >-
+          {{ _cozystack_optional_modules_stat.results
+             | selectattr('stat.exists', 'equalto', true)
+             | map(attribute='item')
+             | list }}
+
+    - name: Ensure multipath drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/multipath/conf.d
+        state: directory
+        mode: "0755"
+
+    # CRITICAL: without this blacklist, multipathd grabs drbd* devices
+    # and makes LINSTOR volumes inaccessible after reboot.
+    - name: Blacklist DRBD devices in multipathd
+      ansible.builtin.copy:
+        dest: /etc/multipath/conf.d/cozystack-drbd-blacklist.conf
+        mode: "0644"
+        content: |
+          blacklist {
+              devnode "^drbd[0-9]+"
+          }
+      notify: Restart multipathd
 
     - name: Configure sysctl parameters
       ansible.posix.sysctl:
@@ -109,3 +234,145 @@
         name: multipathd
         enabled: true
         state: started
+      register: _cozystack_multipathd
+      failed_when: false  # tolerated: VMs / kernels without dm_multipath
+
+    - name: Warn if multipathd failed to start
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: multipathd could not start. Likely causes:
+          dm_multipath kernel module missing, or no multipath-capable
+          storage attached. LINSTOR still works without MPIO, but
+          iSCSI failover will not. The DRBD blacklist file is in place
+          so this will take effect once multipathd can start.
+      when: _cozystack_multipathd.failed | default(false)
+
+    # ZFS backend for LINSTOR (Ubuntu only — Debian needs contrib
+    # + zfs-dkms set up manually).
+    - name: Warn that ZFS on Debian needs manual setup
+      ansible.builtin.debug:
+        msg: >-
+          NOTE: ZFS on Debian requires enabling the contrib component
+          and installing zfs-dkms manually. This playbook skips ZFS
+          automation on Debian. Set cozystack_enable_zfs: false to
+          silence this notice.
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Debian'
+
+    - name: Install ZFS userspace tools
+      ansible.builtin.apt:
+        name: zfsutils-linux
+        state: present
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+
+    - name: Load ZFS kernel module now
+      community.general.modprobe:
+        name: zfs
+      register: _cozystack_zfs_modprobe
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+      failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
+
+    # Only persist zfs in modules-load.d if the module actually loaded —
+    # otherwise systemd-modules-load.service will fail on every boot.
+    - name: Load ZFS kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-zfs.conf
+        mode: "0644"
+        content: "zfs\n"
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - _cozystack_zfs_modprobe is defined
+        - not (_cozystack_zfs_modprobe.failed | default(false))
+
+    - name: Warn if ZFS module failed to load
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: modprobe zfs failed ({{ _cozystack_zfs_modprobe.msg | default('unknown') }}).
+          LINSTOR ZFS backend will not work until this is resolved.
+          Set cozystack_enable_zfs: false to silence.
+      when:
+        - cozystack_enable_zfs | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - _cozystack_zfs_modprobe is defined
+        - _cozystack_zfs_modprobe.failed | default(false)
+
+    # Remove the drop-in in any case where ZFS should not auto-load:
+    # opt-out, Debian (not automated), or modprobe failed. Without this,
+    # systemd-modules-load.service would try the absent module every boot.
+    - name: Remove ZFS modules-load drop-in when not active
+      ansible.builtin.file:
+        path: /etc/modules-load.d/cozystack-zfs.conf
+        state: absent
+      when: >-
+        not (cozystack_enable_zfs | default(true) | bool) or
+        ansible_distribution != 'Ubuntu' or
+        (_cozystack_zfs_modprobe is defined and
+         _cozystack_zfs_modprobe.failed | default(false))
+
+    # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
+    # QEMU and libvirt run inside KubeVirt pods; no host packages needed.
+    # Detect CPU vendor so only the matching kvm_* module is persisted —
+    # writing both would make systemd-modules-load.service fail every boot
+    # on the mismatched one.
+    - name: Detect CPU vendor for KVM module selection
+      ansible.builtin.set_fact:
+        _cozystack_kvm_module: >-
+          {{ 'kvm_intel' if 'GenuineIntel' in (ansible_processor | join(' '))
+             else 'kvm_amd' if 'AuthenticAMD' in (ansible_processor | join(' '))
+             else '' }}
+      when: cozystack_enable_kubevirt | default(true) | bool
+
+    # Required KubeVirt modules must load; if vhost_net or tun is unavailable
+    # (custom/stripped kernel) the playbook fails here rather than proceed.
+    - name: Load required KubeVirt kernel modules now
+      community.general.modprobe:
+        name: "{{ item }}"
+      loop:
+        - vhost_net
+        - tun
+      when: cozystack_enable_kubevirt | default(true) | bool
+
+    # Try loading the CPU-vendor KVM module; unsupported CPU, nested virt
+    # disabled in BIOS, or container host → modprobe fails. Tolerate the
+    # failure here and check /sys/module afterwards so the persisted
+    # modules-load.d file only lists modules that actually loaded
+    # (otherwise systemd-modules-load fails on every boot).
+    - name: Load CPU-vendor KVM module now (best-effort)
+      community.general.modprobe:
+        name: "{{ _cozystack_kvm_module }}"
+      failed_when: false
+      when:
+        - cozystack_enable_kubevirt | default(true) | bool
+        - (_cozystack_kvm_module | default('')) | length > 0
+
+    - name: Check whether CPU-vendor KVM module is loaded
+      ansible.builtin.stat:
+        path: "/sys/module/{{ _cozystack_kvm_module }}"
+      register: _cozystack_kvm_module_stat
+      when:
+        - cozystack_enable_kubevirt | default(true) | bool
+        - (_cozystack_kvm_module | default('')) | length > 0
+
+    - name: Persist KubeVirt kernel modules for boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-kubevirt.conf
+        mode: "0644"
+        content: |
+          vhost_net
+          tun
+          {% if _cozystack_kvm_module_stat is defined and (_cozystack_kvm_module_stat.stat.exists | default(false)) %}
+          {{ _cozystack_kvm_module }}
+          {% endif %}
+      when: cozystack_enable_kubevirt | default(true) | bool
+
+    - name: Remove KubeVirt modules-load drop-in when disabled
+      ansible.builtin.file:
+        path: /etc/modules-load.d/cozystack-kubevirt.conf
+        state: absent
+      when: not (cozystack_enable_kubevirt | default(true) | bool)
