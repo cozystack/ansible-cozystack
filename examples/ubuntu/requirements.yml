@@ -10,4 +10,4 @@ collections:
   - name: cozystack.installer
     source: https://github.com/cozystack/ansible-cozystack.git
     type: git
-    version: 1.2.2
+    version: v1.2.3

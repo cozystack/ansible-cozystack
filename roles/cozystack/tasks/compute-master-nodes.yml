@@ -21,7 +21,7 @@
 - name: Validate master node IPs are valid addresses
   ansible.builtin.assert:
     that:
-      - (item | ansible.utils.ipaddr) != false
+      - item is cozystack.installer.is_ip_address
     fail_msg: >-
       '{{ item }}' is not a valid IP address in MASTER_NODES.
       Inventory host keys in the 'server' group must be IPs, not hostnames.
