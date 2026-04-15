@@ -129,6 +129,52 @@ jobs:
 
           echo "OK: Hostname host keys correctly rejected"
 
+  external-ips:
+    name: External IPs validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Build and install collection
+        run: |
+          ansible-galaxy collection build
+          ansible-galaxy collection install cozystack-installer-*.tar.gz --force
+
+      - name: Test external IPs rendering
+        run: >-
+          ansible-playbook tests/test-external-ips.yml
+          --inventory tests/test-external-ips-inventory.yml
+
+      - name: Test invalid IPs are rejected
+        run: |
+          set +e
+          output="$(ansible-playbook tests/test-external-ips.yml \
+            --inventory tests/test-invalid-ips-inventory.yml 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: Expected failure for invalid IPs, but playbook succeeded"
+            exit 1
+          fi
+
+          if ! grep -q "not a valid IP address in cozystack_external_ips" <<< "$output"; then
+            echo "ERROR: Playbook failed, but not due to IP validation"
+            echo "$output"
+            exit 1
+          fi
+
+          echo "OK: Invalid IPs correctly rejected"
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest

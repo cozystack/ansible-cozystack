@@ -13,6 +13,12 @@
   ansible.builtin.include_tasks: compute-master-nodes.yml
   when: cozystack_create_platform_package
 
+- name: Validate external IP addresses
+  ansible.builtin.include_tasks: validate-external-ips.yml
+  when:
+    - cozystack_create_platform_package
+    - cozystack_external_ips | length > 0
+
 - name: Set architecture for Helm download
   ansible.builtin.set_fact:
     _cozystack_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
@@ -147,3 +153,38 @@
   become: true
   changed_when: false
   when: cozystack_create_platform_package
+
+- name: Wait for root Tenant to exist
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      wait tenants.apps.cozystack.io/root
+      --namespace tenant-root
+      --for=jsonpath='{.metadata.name}'=root
+      --timeout={{ cozystack_operator_wait_timeout }}s
+  become: true
+  changed_when: false
+  register: _tenant_wait
+  retries: 5
+  delay: 15
+  until: _tenant_wait.rc == 0
+  when:
+    - cozystack_tenant_root_ingress
+    - cozystack_create_platform_package
+    - not ansible_check_mode
+
+- name: Enable ingress on root Tenant
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      patch tenants.apps.cozystack.io root
+      --namespace tenant-root
+      --type=merge
+      --patch '{"spec":{"ingress":true}}'
+  become: true
+  register: _tenant_patch
+  changed_when: "'patched' in _tenant_patch.stdout and '(no change)' not in _tenant_patch.stdout"
+  when:
+    - cozystack_tenant_root_ingress
+    - cozystack_create_platform_package
+    - not ansible_check_mode
