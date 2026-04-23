@@ -38,6 +38,14 @@ Synced with Cozystack v1.1.3.
 Unreleased
 ==========
 
+- CI: new ``hack/check-versions.sh`` invariant check runs in the ``Lint``
+  job and fails the build if version strings drift across the three
+  tracked dependencies: the ``cozy-installer`` chart version must match
+  in ``galaxy.yml``, ``roles/cozystack/defaults/main.yml``, and the three
+  ``examples/*/requirements.yml``; the ``k3s_version`` must match across
+  all four inventory files; the ``k3s.orchestration`` collection version
+  must match across ``tests/requirements.yml`` and the three
+  ``examples/*/requirements.yml``.
 - New variable ``cozystack_external_ips`` (list, default ``[]``): external
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
