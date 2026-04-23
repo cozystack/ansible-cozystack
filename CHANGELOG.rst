@@ -2,7 +2,6 @@
 cozystack.installer Release Notes
 =================================
 
-
 Unreleased
 ==========
 
@@ -57,7 +56,9 @@ Ubuntu 26.04 LTS support and namespace adoption.
   ``examples/*/requirements.yml``; the ``k3s_version`` must match across
   all four inventory files; the ``k3s.orchestration`` collection version
   must match across ``tests/requirements.yml`` and the three
-  ``examples/*/requirements.yml``.
+  ``examples/*/requirements.yml``. A companion ``hack/test-check-versions.sh``
+  self-test runs alongside in the same job and asserts the drift path
+  correctly exits nonzero when any single tracked file is perturbed.
 - New variable ``cozystack_external_ips`` (list, default ``[]``): external
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
