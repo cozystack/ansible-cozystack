@@ -55,6 +55,12 @@ run_negative "cozy-installer" "galaxy.yml" \
 run_negative "k3s" "tests/ci-inventory.yml" \
   '.cluster.vars.k3s_version = strenv(NEW)' "v0.0.0-test"
 
+# Perturb a middle entry (not the first one paired to report()) to guard
+# against a future refactor of report()'s "reference value" logic silently
+# missing drift in anything but the reference file.
+run_negative "k3s" "examples/suse/inventory.yml" \
+  '.cluster.vars.k3s_version = strenv(NEW)' "v0.0.0-test"
+
 run_negative "k3s.orchestration" "tests/requirements.yml" \
   '(.collections[] | select(.name == "k3s.orchestration") | .version) = strenv(NEW)' "0.0.0-test"
 
