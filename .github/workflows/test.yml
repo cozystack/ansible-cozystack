@@ -15,6 +15,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Check version invariants
+        run: ./hack/check-versions.sh
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
