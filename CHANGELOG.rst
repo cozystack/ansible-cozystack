@@ -2,39 +2,6 @@
 cozystack.installer Release Notes
 =================================
 
-v1.2.3
-======
-
-- Drop ``ansible.utils`` collection dependency and ``netaddr`` Python
-  package requirement. Master node IP validation now uses a bundled
-  ``cozystack.installer.is_ip_address`` Jinja2 test backed by the
-  Python standard library ``ipaddress`` module.
-- Add IPv6 inventory fixture and CI coverage for IPv6 host keys.
-
-v1.2.2
-======
-
-Synced with Cozystack v1.2.2.
-
-- Bump ``cozystack_chart_version`` to ``1.2.2``
-
-v1.2.1
-======
-
-Synced with Cozystack v1.2.1.
-
-- Bump ``cozystack_chart_version`` to ``1.2.1``
-- Derive ``MASTER_NODES`` for kube-ovn from the ``server`` inventory
-  group; add ``cozystack_master_nodes`` override for multi-master setups
-- Validate master node entries are valid IP addresses, not hostnames
-
-v1.1.3
-======
-
-Synced with Cozystack v1.1.3.
-
-- Bump ``cozystack_chart_version`` to ``1.1.3``
-
 Unreleased
 ==========
 
@@ -45,7 +12,9 @@ Unreleased
   ``examples/*/requirements.yml``; the ``k3s_version`` must match across
   all four inventory files; the ``k3s.orchestration`` collection version
   must match across ``tests/requirements.yml`` and the three
-  ``examples/*/requirements.yml``.
+  ``examples/*/requirements.yml``. A companion ``hack/test-check-versions.sh``
+  self-test runs alongside in the same job and asserts the drift path
+  correctly exits nonzero when any single tracked file is perturbed.
 - New variable ``cozystack_external_ips`` (list, default ``[]``): external
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
@@ -107,6 +76,39 @@ Node prerequisites: comprehensive audit and install in examples.
   required because OpenZFS has not yet published an el10 release RPM;
   ``prepare-rhel.yml`` fails fast with a clear message until an entry is
   added to ``cozystack_zfs_release_rpm_by_major``.
+
+v1.2.3
+======
+
+- Drop ``ansible.utils`` collection dependency and ``netaddr`` Python
+  package requirement. Master node IP validation now uses a bundled
+  ``cozystack.installer.is_ip_address`` Jinja2 test backed by the
+  Python standard library ``ipaddress`` module.
+- Add IPv6 inventory fixture and CI coverage for IPv6 host keys.
+
+v1.2.2
+======
+
+Synced with Cozystack v1.2.2.
+
+- Bump ``cozystack_chart_version`` to ``1.2.2``
+
+v1.2.1
+======
+
+Synced with Cozystack v1.2.1.
+
+- Bump ``cozystack_chart_version`` to ``1.2.1``
+- Derive ``MASTER_NODES`` for kube-ovn from the ``server`` inventory
+  group; add ``cozystack_master_nodes`` override for multi-master setups
+- Validate master node entries are valid IP addresses, not hostnames
+
+v1.1.3
+======
+
+Synced with Cozystack v1.1.3.
+
+- Bump ``cozystack_chart_version`` to ``1.1.3``
 
 v1.1.2
 ======
