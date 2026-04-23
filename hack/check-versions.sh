@@ -75,7 +75,7 @@ cozy_ubuntu=$(strip_v "$(get_collection_version examples/ubuntu/requirements.yml
 
 report "cozy-installer" \
   "galaxy.yml:version"                                "$cozy_galaxy" \
-  "roles/cozystack/defaults/main.yml:chart_version"   "$cozy_role" \
+  "roles/cozystack/defaults/main.yml:cozystack_chart_version" "$cozy_role" \
   "examples/rhel/requirements.yml"                    "$cozy_rhel" \
   "examples/suse/requirements.yml"                    "$cozy_suse" \
   "examples/ubuntu/requirements.yml"                  "$cozy_ubuntu" \
