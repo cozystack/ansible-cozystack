@@ -19,6 +19,11 @@
 # Requires mikefarah/yq (preinstalled on GitHub-hosted ubuntu runners).
 
 set -euo pipefail
+# Propagate failures from command substitutions ($(...)) into the outer
+# assignment so a yq extraction error is not silently swallowed into an
+# empty value. Requires bash 4.4+; ubuntu-latest and macOS brew-bash both
+# qualify.
+shopt -s inherit_errexit
 
 if ! command -v yq >/dev/null 2>&1; then
   echo "check-versions.sh: yq (mikefarah) is required but was not found on PATH" >&2
@@ -44,6 +49,11 @@ report() {
   shift
   local -a pairs=("$@")
   local first="${pairs[1]}"
+  if [ -z "$first" ]; then
+    printf 'DRIFT in %s: reference value is empty (yq extraction failed?)\n' \
+      "$label" >&2
+    return 1
+  fi
   local drift=0
   local i
   for ((i = 1; i < ${#pairs[@]}; i += 2)); do
