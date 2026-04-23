@@ -81,7 +81,10 @@ report "cozy-installer" \
   "examples/ubuntu/requirements.yml"                  "$cozy_ubuntu" \
   || err=1
 
-# 2. k3s binary
+# 2. k3s binary — no strip_v: every inventory uses the v-prefixed
+#    k3s_version form (e.g. "v1.35.3+k3s1"), so values are already
+#    directly comparable. Adding a new inventory without the "v" prefix
+#    would intentionally fail this check.
 k3s_ci=$(yq --exit-status '.cluster.vars.k3s_version' tests/ci-inventory.yml)
 k3s_rhel=$(yq --exit-status '.cluster.vars.k3s_version' examples/rhel/inventory.yml)
 k3s_suse=$(yq --exit-status '.cluster.vars.k3s_version' examples/suse/inventory.yml)
