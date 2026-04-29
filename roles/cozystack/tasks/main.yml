@@ -9,6 +9,22 @@
       It must be the node's INTERNAL IP
       (visible on network interface, not public/NAT IP).
 
+# The cozy-installer chart hardcodes `name: cozy-system` in
+# templates/cozystack-operator.yaml — it does not expose a values
+# key for the operator namespace. Setting cozystack_namespace to
+# anything else used to fail silently: the role's wait/patch tasks
+# would look in the override while the operator deploys to
+# cozy-system. Fail loudly until the chart adds a values key.
+- name: Validate cozystack_namespace matches chart hardcoded value
+  ansible.builtin.assert:
+    that:
+      - cozystack_namespace == 'cozy-system'
+    fail_msg: >-
+      cozystack_namespace is currently fixed to 'cozy-system' by the
+      cozy-installer chart (templates/cozystack-operator.yaml). Setting
+      a different value silently breaks the wait/patch tasks in this
+      role. Remove the override from inventory.
+
 - name: Compute and validate master node IPs for kube-ovn
   ansible.builtin.include_tasks: compute-master-nodes.yml
   when: cozystack_create_platform_package
@@ -58,23 +74,17 @@
   become: true
   when: not ansible_check_mode
 
-# The cozy-installer chart hardcodes `Namespace cozy-system` in
-# templates/cozystack-operator.yaml — the chart does not expose a
-# values key for the operator namespace, so it is fixed at the chart
-# level. Patch the literal `cozy-system` here even though
-# `cozystack_namespace` is a documented role variable: if a future
-# chart version makes it overridable, we'll switch this to use the
-# variable, but until then patching `cozystack_namespace` would miss
-# the namespace the chart actually creates.
-#
-# If `cozy-system` was created out of band — by a manual
+# The cozy-installer chart templates `Namespace cozy-system`.
+# If that namespace was created out of band — by a manual
 # `kubectl create ns`, by a previous failed install, or by a
 # different chart — `helm install` fails with
 #   Namespace "cozy-system" exists and cannot be imported into the
 #   current release: invalid ownership metadata
-# Adopt the namespace by stamping the helm release labels and
+# Adopt the namespace by stamping helm release labels and
 # annotations before the helm install runs. No-op when the namespace
-# does not exist or already carries the right metadata.
+# does not exist or already carries the right metadata. Refuses to
+# proceed if the namespace is owned by a *different* helm release —
+# that case requires operator intervention, not silent re-adoption.
 - name: Look up cozy-system namespace
   kubernetes.core.k8s_info:
     kubeconfig: "{{ cozystack_kubeconfig }}"
@@ -84,6 +94,31 @@
   become: true
   register: _cozystack_ns_info
   when: not ansible_check_mode
+
+- name: Refuse to overwrite cozy-system if owned by another helm release
+  ansible.builtin.fail:
+    msg: >-
+      cozy-system namespace is owned by helm release '{{ _release_name }}'
+      in namespace '{{ _release_namespace }}', not by this role's
+      cozystack_release_name='{{ cozystack_release_name }}' in
+      cozystack_release_namespace='{{ cozystack_release_namespace }}'.
+      Refusing to overwrite ownership metadata. Either uninstall the
+      conflicting release, delete the namespace, or align
+      cozystack_release_name / cozystack_release_namespace with the
+      existing owner.
+  vars:
+    _ns: "{{ (_cozystack_ns_info.resources | default([]) | first) | default({}) }}"
+    _labels: "{{ _ns.metadata.labels | default({}) }}"
+    _annotations: "{{ _ns.metadata.annotations | default({}) }}"
+    _release_name: "{{ _annotations.get('meta.helm.sh/release-name', '') }}"
+    _release_namespace: "{{ _annotations.get('meta.helm.sh/release-namespace', '') }}"
+  when:
+    - not ansible_check_mode
+    - _cozystack_ns_info.resources | default([]) | length > 0
+    - _labels.get('app.kubernetes.io/managed-by') == 'Helm'
+    - >-
+      _release_name != cozystack_release_name
+      or _release_namespace != cozystack_release_namespace
 
 - name: Adopt cozy-system namespace into helm release
   ansible.builtin.command:
@@ -110,10 +145,9 @@
   when:
     - not ansible_check_mode
     - _cozystack_ns_info.resources | default([]) | length > 0
-    - >-
-      _labels.get('app.kubernetes.io/managed-by') != 'Helm'
-      or _annotations.get('meta.helm.sh/release-name') != cozystack_release_name
-      or _annotations.get('meta.helm.sh/release-namespace') != cozystack_release_namespace
+    - _labels.get('app.kubernetes.io/managed-by', '') != 'Helm'
+      or _annotations.get('meta.helm.sh/release-name', '') != cozystack_release_name
+      or _annotations.get('meta.helm.sh/release-namespace', '') != cozystack_release_namespace
 
 - name: Install Cozystack chart
   kubernetes.core.helm:
