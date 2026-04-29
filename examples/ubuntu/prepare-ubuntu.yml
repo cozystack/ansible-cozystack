@@ -33,6 +33,12 @@
     # Ubuntu-only: linux-modules-extra-* ships openvswitch and geneve
     # on cloud/minimal kernels. Debian includes these in its base
     # kernel image and has no such split package.
+    #
+    # Ubuntu 26.04 LTS bundles openvswitch and vport-geneve into the
+    # main linux-image-generic and ships no linux-modules-extra-*
+    # package for kernel 7.x. Override to an empty list in inventory
+    # to skip the apt install on those hosts:
+    #   cozystack_ubuntu_extra_packages: []
     cozystack_ubuntu_extra_packages:
       - "linux-modules-extra-{{ ansible_kernel }}"
 
@@ -127,11 +133,15 @@
         state: present
         update_cache: true
 
+    # Skip when the list is empty so users can opt out on distros that
+    # ship the modules in the base kernel image (e.g. Ubuntu 26.04).
     - name: Install Ubuntu-only extra kernel modules
       ansible.builtin.apt:
         name: "{{ cozystack_ubuntu_extra_packages }}"
         state: present
-      when: ansible_distribution == 'Ubuntu'
+      when:
+        - ansible_distribution == 'Ubuntu'
+        - cozystack_ubuntu_extra_packages | length > 0
 
     - name: Try loading optional kernel modules (may be built-in or missing)
       community.general.modprobe:
