@@ -18,11 +18,13 @@
 #
 # Connection model: this play uses the `raw` module with no `become`,
 # so it works even when standard ansible become is broken by sudo-rs.
-# Privilege escalation happens inside the raw command via `sudo -S`:
-#   - If the connecting user has passwordless sudo, `ansible_become_password`
-#     can be unset; sudo-rs does not prompt for NOPASSWD entries.
-#   - If the user requires a password, set ansible_become_password in
-#     inventory or pass it via --ask-become-pass.
+# Privilege escalation goes through `/usr/bin/sudo.ws` directly so
+# we never depend on whatever flag surface sudo-rs exposes:
+#   - If the connecting user has passwordless sudo, leave
+#     ansible_become_password unset; sudo.ws --non-interactive runs
+#     without prompting.
+#   - If the user requires a password, set ansible_become_password
+#     in inventory or pass it via --ask-become-pass.
 
 - name: Switch sudo alternative to classical sudo (Ubuntu 26.04+)
   hosts: cluster
@@ -36,15 +38,21 @@
       changed_when: false
       failed_when: false
 
+    # Calls /usr/bin/sudo.ws directly (the classical sudo binary
+    # co-installed on 26.04). Skipping the `sudo` symlink avoids any
+    # dependency on sudo-rs' subset of the classical CLI. no_log
+    # prevents ansible_become_password from leaking into task output
+    # if the raw command fails.
     - name: Switch sudo alternative to /usr/bin/sudo.ws
       ansible.builtin.raw: |
         {% if ansible_become_password is defined %}
-        printf '%s\n' {{ ansible_become_password | quote }} | sudo --stdin --prompt='' update-alternatives --set sudo /usr/bin/sudo.ws
+        printf '%s\n' {{ ansible_become_password | quote }} | /usr/bin/sudo.ws --stdin --prompt='' update-alternatives --set sudo /usr/bin/sudo.ws
         {% else %}
-        sudo --non-interactive update-alternatives --set sudo /usr/bin/sudo.ws
+        /usr/bin/sudo.ws --non-interactive update-alternatives --set sudo /usr/bin/sudo.ws
         {% endif %}
       register: _cozystack_sudo_switch
       changed_when: _cozystack_sudo_switch.rc == 0
+      no_log: true
       when:
         - _cozystack_sudo_current.stdout is defined
         - "'sudo-rs' in _cozystack_sudo_current.stdout"
