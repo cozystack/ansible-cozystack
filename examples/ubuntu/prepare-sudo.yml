@@ -1,0 +1,51 @@
+---
+# Switch sudo alternative to classical sudo on Ubuntu 26.04+.
+#
+# Ubuntu 26.04 LTS ships sudo-rs (Rust rewrite) as the default
+# /usr/bin/sudo alternative. sudo-rs does not read passwords from
+# ansible's privilege-escalation pseudo-tty, so every task with
+# `become: true` and a password-protected user hangs and fails with
+#   Timeout (12s) waiting for privilege escalation prompt.
+#
+# The classical sudo binary is co-installed at /usr/bin/sudo.ws on
+# 26.04 hosts. This playbook switches the `sudo` alternative to it
+# before any other play runs `become: true` tasks, then becomes a
+# no-op on subsequent runs and on releases without sudo-rs.
+#
+# Run before prepare-ubuntu.yml on Ubuntu 26.04+ inventories. Earlier
+# Ubuntu releases and Debian skip every task here — safe to keep in
+# site.yml unconditionally.
+#
+# Connection model: this play uses the `raw` module with no `become`,
+# so it works even when standard ansible become is broken by sudo-rs.
+# Privilege escalation happens inside the raw command via `sudo -S`:
+#   - If the connecting user has passwordless sudo, `ansible_become_password`
+#     can be unset; sudo-rs does not prompt for NOPASSWD entries.
+#   - If the user requires a password, set ansible_become_password in
+#     inventory or pass it via --ask-become-pass.
+
+- name: Switch sudo alternative to classical sudo (Ubuntu 26.04+)
+  hosts: cluster
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Detect current sudo alternative target
+      ansible.builtin.raw: |
+        readlink -f /etc/alternatives/sudo 2>/dev/null || true
+      register: _cozystack_sudo_current
+      changed_when: false
+      failed_when: false
+
+    - name: Switch sudo alternative to /usr/bin/sudo.ws
+      ansible.builtin.raw: |
+        {% if ansible_become_password is defined %}
+        printf '%s\n' {{ ansible_become_password | quote }} | sudo --stdin --prompt='' update-alternatives --set sudo /usr/bin/sudo.ws
+        {% else %}
+        sudo --non-interactive update-alternatives --set sudo /usr/bin/sudo.ws
+        {% endif %}
+      register: _cozystack_sudo_switch
+      changed_when: _cozystack_sudo_switch.rc == 0
+      when:
+        - _cozystack_sudo_current.stdout is defined
+        - "'sudo-rs' in _cozystack_sudo_current.stdout"
+        - "'/usr/bin/sudo.ws' not in _cozystack_sudo_current.stdout"

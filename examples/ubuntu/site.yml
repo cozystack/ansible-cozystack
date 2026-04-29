@@ -7,6 +7,12 @@
 # Usage:
 #   ansible-playbook site.yml
 
+# Ubuntu 26.04 ships sudo-rs as the default sudo alternative; ansible
+# `become_method: sudo` hangs against it. This play switches the
+# alternative back to classical sudo and is a no-op everywhere else.
+- name: Switch sudo alternative to classical sudo (Ubuntu 26.04+)
+  ansible.builtin.import_playbook: prepare-sudo.yml
+
 - name: Prepare Ubuntu/Debian nodes for Cozystack
   ansible.builtin.import_playbook: prepare-ubuntu.yml
 
