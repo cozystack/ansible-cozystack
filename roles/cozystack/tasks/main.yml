@@ -84,14 +84,20 @@
 # does not exist or already carries the right metadata. Refuses to
 # proceed if the namespace is owned by a *different* helm release —
 # that case requires operator intervention, not silent re-adoption.
+# Use `kubectl get` rather than `kubernetes.core.k8s_info` so the
+# role works on controllers without the optional `kubernetes` Python
+# package — the rest of this file already drives the cluster via
+# kubectl for the same reason.
 - name: Look up cozy-system namespace
-  kubernetes.core.k8s_info:
-    kubeconfig: "{{ cozystack_kubeconfig }}"
-    api_version: v1
-    kind: Namespace
-    name: cozy-system
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      get namespace cozy-system
+      --ignore-not-found
+      --output=json
   become: true
-  register: _cozystack_ns_info
+  changed_when: false
+  register: _cozystack_ns_lookup
   when: not ansible_check_mode
 
 - name: Refuse to overwrite cozy-system if owned by another helm release
@@ -106,7 +112,7 @@
       cozystack_release_name / cozystack_release_namespace with the
       existing owner.
   vars:
-    _ns: "{{ (_cozystack_ns_info.resources | default([]) | first) | default({}) }}"
+    _ns: "{{ (_cozystack_ns_lookup.stdout | default('') | length > 0) | ternary(_cozystack_ns_lookup.stdout | from_json, {}) }}"
     _labels: "{{ _ns.metadata.labels | default({}) }}"
     _annotations: "{{ _ns.metadata.annotations | default({}) }}"
     _release_name: "{{ _annotations.get('meta.helm.sh/release-name', '') }}"
@@ -116,7 +122,7 @@
   # prior install left annotations behind without the label.
   when:
     - not ansible_check_mode
-    - _cozystack_ns_info.resources | default([]) | length > 0
+    - _cozystack_ns_lookup.stdout | default('') | length > 0
     - >-
       (_labels.get('app.kubernetes.io/managed-by', '') == 'Helm'
        and (_release_name != cozystack_release_name
@@ -145,12 +151,12 @@
   register: _cozystack_ns_adopt
   changed_when: "'patched' in _cozystack_ns_adopt.stdout and '(no change)' not in _cozystack_ns_adopt.stdout"
   vars:
-    _ns: "{{ (_cozystack_ns_info.resources | default([]) | first) | default({}) }}"
+    _ns: "{{ (_cozystack_ns_lookup.stdout | default('') | length > 0) | ternary(_cozystack_ns_lookup.stdout | from_json, {}) }}"
     _labels: "{{ _ns.metadata.labels | default({}) }}"
     _annotations: "{{ _ns.metadata.annotations | default({}) }}"
   when:
     - not ansible_check_mode
-    - _cozystack_ns_info.resources | default([]) | length > 0
+    - _cozystack_ns_lookup.stdout | default('') | length > 0
     - _labels.get('app.kubernetes.io/managed-by', '') != 'Helm'
       or _annotations.get('meta.helm.sh/release-name', '') != cozystack_release_name
       or _annotations.get('meta.helm.sh/release-namespace', '') != cozystack_release_namespace
