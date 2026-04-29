@@ -58,30 +58,38 @@
   become: true
   when: not ansible_check_mode
 
-# The cozy-installer chart templates `Namespace cozystack_namespace`
-# (cozy-system by default). If that namespace was created out of band
-# — by a manual `kubectl create ns`, by a previous failed install, or
-# by a different chart — `helm install` fails with
+# The cozy-installer chart hardcodes `Namespace cozy-system` in
+# templates/cozystack-operator.yaml — the chart does not expose a
+# values key for the operator namespace, so it is fixed at the chart
+# level. Patch the literal `cozy-system` here even though
+# `cozystack_namespace` is a documented role variable: if a future
+# chart version makes it overridable, we'll switch this to use the
+# variable, but until then patching `cozystack_namespace` would miss
+# the namespace the chart actually creates.
+#
+# If `cozy-system` was created out of band — by a manual
+# `kubectl create ns`, by a previous failed install, or by a
+# different chart — `helm install` fails with
 #   Namespace "cozy-system" exists and cannot be imported into the
 #   current release: invalid ownership metadata
 # Adopt the namespace by stamping the helm release labels and
 # annotations before the helm install runs. No-op when the namespace
 # does not exist or already carries the right metadata.
-- name: Look up Cozystack namespace
+- name: Look up cozy-system namespace
   kubernetes.core.k8s_info:
     kubeconfig: "{{ cozystack_kubeconfig }}"
     api_version: v1
     kind: Namespace
-    name: "{{ cozystack_namespace }}"
+    name: cozy-system
   become: true
   register: _cozystack_ns_info
   when: not ansible_check_mode
 
-- name: Adopt Cozystack namespace into helm release
+- name: Adopt cozy-system namespace into helm release
   ansible.builtin.command:
     cmd: >-
       kubectl --kubeconfig {{ cozystack_kubeconfig }}
-      patch namespace {{ cozystack_namespace }}
+      patch namespace cozy-system
       --type=merge
       --patch '{
         "metadata": {
