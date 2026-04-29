@@ -167,6 +167,9 @@ informational notice:
 
 Other subsystem notes:
 
+- **Ubuntu 26.04 LTS:** two opt-ins are required.
+  1. `sudo-rs` ships as the default `/usr/bin/sudo` alternative and does not honour ansible's `become_method: sudo` privilege-escalation pseudo-tty — every `become: true` task hangs with `Timeout (12s) waiting for privilege escalation prompt`. The classical sudo binary is co-installed at `/usr/bin/sudo.ws`. The `examples/ubuntu/site.yml` pipeline imports `prepare-sudo.yml` first, which switches the `sudo` alternative back via `update-alternatives` using a `raw` command (so it works even when become is broken). The play is a no-op on releases without sudo-rs.
+  2. The `linux-modules-extra-*` package does not exist for kernel 7.x — `openvswitch` and `vport-geneve` are bundled into `linux-image-generic`. Set `cozystack_ubuntu_extra_packages: []` in inventory to skip the apt install.
 - **Cloud providers (Ubuntu on OCI, AWS, GCP):** stock Ubuntu cloud images ship an iptables INPUT chain that ends with `REJECT icmp-host-prohibited`, which blocks k3s ports 2380/6443 between nodes. Set `cozystack_flush_iptables: true` in your inventory so the prepare playbook flushes the INPUT chain before k3s installs. Oracle Linux images on OCI do not have this restriction out of the box.
 - **Rocky 10 / Alma 10 (and other RHEL 10 rebuilds):** the `iptables` userspace binary is not installed by default. `examples/rhel/prepare-rhel.yml` installs `iptables-nft` so the `cozystack_flush_iptables` task and k3s kube-proxy replacement have a working `iptables` wrapper over nftables.
 - **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.

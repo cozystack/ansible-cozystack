@@ -38,6 +38,38 @@ Synced with Cozystack v1.1.3.
 Unreleased
 ==========
 
+Ubuntu 26.04 LTS support and namespace adoption.
+
+- ``examples/ubuntu/`` now boots end-to-end on Ubuntu 26.04 LTS. Two
+  changes were needed:
+
+  - New playbook ``examples/ubuntu/prepare-sudo.yml`` switches the
+    ``sudo`` alternative from ``sudo-rs`` (Rust rewrite, default on
+    26.04) back to classical sudo at ``/usr/bin/sudo.ws``. ``sudo-rs``
+    does not honour ansible's privilege-escalation pseudo-tty and
+    every subsequent ``become: true`` task hangs with
+    ``Timeout (12s) waiting for privilege escalation prompt``. The
+    play uses ``raw`` so it runs before any become-dependent task and
+    is a no-op on releases that do not ship ``sudo-rs``.
+    ``examples/ubuntu/site.yml`` imports it first.
+  - ``Install Ubuntu-only extra kernel modules`` now skips when
+    ``cozystack_ubuntu_extra_packages`` is empty. Ubuntu 26.04 ships
+    ``openvswitch`` and ``vport-geneve`` in the main
+    ``linux-image-generic`` and has no ``linux-modules-extra-*`` for
+    kernel 7.x. Override the variable to ``[]`` in inventory on those
+    hosts; earlier releases keep the existing default.
+
+- The role now adopts the Cozystack namespace
+  (``cozystack_namespace``, default ``cozy-system``) into the
+  cozy-installer helm release on first run if it already exists
+  out-of-band. Without this pre-task, ``helm install`` fails with
+  ``Namespace "cozy-system" exists and cannot be imported into the
+  current release: invalid ownership metadata`` whenever the
+  namespace was created manually, by a previous failed install, or
+  by a different chart that shares the namespace name. The pre-task
+  is a no-op when the namespace is absent or already carries matching
+  helm metadata.
+
 - New variable ``cozystack_external_ips`` (list, default ``[]``): external
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
