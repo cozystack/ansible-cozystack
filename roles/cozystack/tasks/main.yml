@@ -58,6 +58,55 @@
   become: true
   when: not ansible_check_mode
 
+# The cozy-installer chart templates `Namespace cozystack_namespace`
+# (cozy-system by default). If that namespace was created out of band
+# — by a manual `kubectl create ns`, by a previous failed install, or
+# by a different chart — `helm install` fails with
+#   Namespace "cozy-system" exists and cannot be imported into the
+#   current release: invalid ownership metadata
+# Adopt the namespace by stamping the helm release labels and
+# annotations before the helm install runs. No-op when the namespace
+# does not exist or already carries the right metadata.
+- name: Look up Cozystack namespace
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cozystack_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ cozystack_namespace }}"
+  become: true
+  register: _cozystack_ns_info
+  when: not ansible_check_mode
+
+- name: Adopt Cozystack namespace into helm release
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ cozystack_kubeconfig }}
+      patch namespace {{ cozystack_namespace }}
+      --type=merge
+      --patch '{
+        "metadata": {
+          "labels": {"app.kubernetes.io/managed-by": "Helm"},
+          "annotations": {
+            "meta.helm.sh/release-name": "{{ cozystack_release_name }}",
+            "meta.helm.sh/release-namespace": "{{ cozystack_release_namespace }}"
+          }
+        }
+      }'
+  become: true
+  register: _cozystack_ns_adopt
+  changed_when: "'patched' in _cozystack_ns_adopt.stdout and '(no change)' not in _cozystack_ns_adopt.stdout"
+  vars:
+    _ns: "{{ (_cozystack_ns_info.resources | default([]) | first) | default({}) }}"
+    _labels: "{{ _ns.metadata.labels | default({}) }}"
+    _annotations: "{{ _ns.metadata.annotations | default({}) }}"
+  when:
+    - not ansible_check_mode
+    - _cozystack_ns_info.resources | default([]) | length > 0
+    - >-
+      _labels.get('app.kubernetes.io/managed-by') != 'Helm'
+      or _annotations.get('meta.helm.sh/release-name') != cozystack_release_name
+      or _annotations.get('meta.helm.sh/release-namespace') != cozystack_release_namespace
+
 - name: Install Cozystack chart
   kubernetes.core.helm:
     release_name: "{{ cozystack_release_name }}"
