@@ -79,6 +79,92 @@ def test_prepare_sudo_invokes_classical_binary_directly():
     )
 
 
+# roles/cozystack/tasks/main.yml — namespace foot-gun protections
+
+
+def _load_role_tasks():
+    with open(
+        os.path.join(REPO_ROOT, "roles/cozystack/tasks/main.yml"),
+        "r",
+        encoding="utf-8",
+    ) as fh:
+        return yaml.safe_load(fh)
+
+
+def _find_role_task(tasks, name):
+    for task in tasks:
+        if task.get("name") == name:
+            return task
+    raise AssertionError(
+        "task %r not found among %r"
+        % (name, [t.get("name") for t in tasks])
+    )
+
+
+def test_role_asserts_cozystack_namespace_is_cozy_system():
+    # The cozy-installer chart hardcodes cozy-system in
+    # templates/cozystack-operator.yaml — overriding the variable
+    # used to silently break the role's wait/patch tasks. The role
+    # must fail loud at validation time, not silently mid-run.
+    tasks = _load_role_tasks()
+    task = _find_role_task(
+        tasks, "Validate cozystack_namespace matches chart hardcoded value"
+    )
+    assert_block = task.get("ansible.builtin.assert", {})
+    that = assert_block.get("that") or []
+    matched = [
+        clause for clause in that
+        if "cozystack_namespace" in clause and "cozy-system" in clause
+    ]
+    assert matched, (
+        "assert must check cozystack_namespace == 'cozy-system'; got %r"
+        % that
+    )
+    fail_msg = assert_block.get("fail_msg") or ""
+    assert "cozy-system" in fail_msg and "chart" in fail_msg.lower(), (
+        "fail_msg must mention 'cozy-system' and the chart constraint; "
+        "got %r" % fail_msg
+    )
+
+
+def test_role_refuses_to_overwrite_foreign_helm_owner():
+    # Adopting an existing cozy-system namespace is safe ONLY when
+    # it carries no helm metadata or is already owned by this role's
+    # release. If managed-by=Helm and release-name points at a
+    # *different* helm release, the role must fail rather than
+    # hijack ownership.
+    tasks = _load_role_tasks()
+    task = _find_role_task(
+        tasks,
+        "Refuse to overwrite cozy-system if owned by another helm release",
+    )
+    assert "ansible.builtin.fail" in task, (
+        "ownership-conflict task must use ansible.builtin.fail, "
+        "not patch — overwriting another release's ownership is "
+        "data-loss-class"
+    )
+    when = task.get("when") or []
+    if isinstance(when, str):
+        when = [when]
+    helm_check = [
+        c for c in when
+        if "managed-by" in c and "Helm" in c
+    ]
+    assert helm_check, (
+        "fail must gate on labels[app.kubernetes.io/managed-by] == "
+        "'Helm' so missing-metadata namespaces still get adopted"
+    )
+    mismatch_check = [
+        c for c in when
+        if "release_name" in c.replace("-", "_")
+        and "cozystack_release_name" in c
+    ]
+    assert mismatch_check, (
+        "fail must gate on release-name annotation differing from "
+        "cozystack_release_name"
+    )
+
+
 # prepare-ubuntu.yml — auto-skip on 26.04+
 
 

@@ -281,3 +281,48 @@ jobs:
             exit 1
           fi
           echo "OK: cozy-system namespace adopted into helm release"
+
+      # Foreign-owner refusal: re-stamp cozy-system as owned by a
+      # different fake helm release and assert the role fails
+      # rather than silently hijacking ownership.
+      - name: Stamp cozy-system as owned by a different helm release
+        run: |
+          set -eux
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            annotate namespace cozy-system --overwrite \
+              meta.helm.sh/release-name=some-other-release \
+              meta.helm.sh/release-namespace=elsewhere
+
+      - name: Test that foreign-owner namespace is NOT overwritten
+        run: |
+          set +e
+          output="$(sudo env "PATH=$PATH" "HOME=$HOME" \
+            ansible-playbook examples/ubuntu/site.yml \
+            --inventory tests/ci-inventory.yml 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: role silently re-adopted a foreign-owned namespace."
+            echo "Expected refusal because cozy-system is owned by 'some-other-release'."
+            echo "$output" | tail -50
+            exit 1
+          fi
+
+          if ! grep -q "owned by helm release 'some-other-release'" <<< "$output"; then
+            echo "ERROR: role failed but not for the expected reason."
+            echo "$output" | tail -50
+            exit 1
+          fi
+
+          echo "OK: role correctly refused to overwrite foreign helm ownership."
+
+      - name: Restore cozy-system ownership for cleanup
+        run: |
+          set -eux
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            annotate namespace cozy-system --overwrite \
+              meta.helm.sh/release-name=cozy-installer \
+              meta.helm.sh/release-namespace=kube-system

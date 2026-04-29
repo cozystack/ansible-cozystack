@@ -24,7 +24,9 @@
 #     ansible_become_password unset; sudo.ws --non-interactive runs
 #     without prompting.
 #   - If the user requires a password, set ansible_become_password
-#     in inventory or pass it via --ask-become-pass.
+#     in inventory or pass it via --ask-become-pass. The password is
+#     piped to sudo.ws --stdin which reads only the first line, so a
+#     password containing a literal newline is unsupported.
 
 - name: Switch sudo alternative to classical sudo (Ubuntu 26.04+)
   hosts: cluster
