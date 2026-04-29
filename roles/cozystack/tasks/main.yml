@@ -10,20 +10,19 @@
       (visible on network interface, not public/NAT IP).
 
 # The cozy-installer chart hardcodes `name: cozy-system` in
-# templates/cozystack-operator.yaml — it does not expose a values
-# key for the operator namespace. Setting cozystack_namespace to
-# anything else used to fail silently: the role's wait/patch tasks
-# would look in the override while the operator deploys to
-# cozy-system. Fail loudly until the chart adds a values key.
-- name: Validate cozystack_namespace matches chart hardcoded value
+# templates/cozystack-operator.yaml — there is no values key for the
+# operator namespace. Fail loudly if an old inventory still sets the
+# variable, so users get an explicit upgrade signal instead of
+# silently broken wait/patch tasks pointing at the override.
+- name: Reject removed cozystack_namespace variable
   ansible.builtin.assert:
     that:
-      - cozystack_namespace == 'cozy-system'
+      - cozystack_namespace is not defined
     fail_msg: >-
-      cozystack_namespace is currently fixed to 'cozy-system' by the
-      cozy-installer chart (templates/cozystack-operator.yaml). Setting
-      a different value silently breaks the wait/patch tasks in this
-      role. Remove the override from inventory.
+      cozystack_namespace was removed from this role's variables.
+      The cozy-installer chart hardcodes 'cozy-system' in
+      templates/cozystack-operator.yaml and provides no override.
+      Remove cozystack_namespace from inventory.
 
 - name: Compute and validate master node IPs for kube-ovn
   ansible.builtin.include_tasks: compute-master-nodes.yml
@@ -112,13 +111,20 @@
     _annotations: "{{ _ns.metadata.annotations | default({}) }}"
     _release_name: "{{ _annotations.get('meta.helm.sh/release-name', '') }}"
     _release_namespace: "{{ _annotations.get('meta.helm.sh/release-namespace', '') }}"
+  # Refuse if ANY helm metadata indicator is present and mismatched.
+  # Gating purely on managed-by would miss the (rare) state where a
+  # prior install left annotations behind without the label.
   when:
     - not ansible_check_mode
     - _cozystack_ns_info.resources | default([]) | length > 0
-    - _labels.get('app.kubernetes.io/managed-by') == 'Helm'
     - >-
-      _release_name != cozystack_release_name
-      or _release_namespace != cozystack_release_namespace
+      (_labels.get('app.kubernetes.io/managed-by', '') == 'Helm'
+       and (_release_name != cozystack_release_name
+            or _release_namespace != cozystack_release_namespace))
+      or (_release_name | length > 0
+          and _release_name != cozystack_release_name)
+      or (_release_namespace | length > 0
+          and _release_namespace != cozystack_release_namespace)
 
 - name: Adopt cozy-system namespace into helm release
   ansible.builtin.command:
@@ -171,7 +177,7 @@
     cmd: >-
       kubectl --kubeconfig {{ cozystack_kubeconfig }}
       wait deployment/cozystack-operator
-      --namespace {{ cozystack_namespace }}
+      --namespace cozy-system
       --timeout={{ cozystack_operator_wait_timeout }}s
       --for=condition=Available
   become: true

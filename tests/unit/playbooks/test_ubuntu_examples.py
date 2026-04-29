@@ -101,38 +101,83 @@ def _find_role_task(tasks, name):
     )
 
 
-def test_role_asserts_cozystack_namespace_is_cozy_system():
-    # The cozy-installer chart hardcodes cozy-system in
-    # templates/cozystack-operator.yaml — overriding the variable
-    # used to silently break the role's wait/patch tasks. The role
-    # must fail loud at validation time, not silently mid-run.
+def test_role_rejects_removed_cozystack_namespace_variable():
+    # cozystack_namespace was removed from defaults because the chart
+    # hardcodes 'cozy-system' in templates/cozystack-operator.yaml. The
+    # role must fail loud if a stale inventory still sets it, with a
+    # message pointing at the chart constraint and telling the user
+    # what to remove. Without this, an inventory carried over from an
+    # older role version would silently re-introduce the foot-gun the
+    # variable removal was meant to eliminate.
     tasks = _load_role_tasks()
-    task = _find_role_task(
-        tasks, "Validate cozystack_namespace matches chart hardcoded value"
-    )
+    task = _find_role_task(tasks, "Reject removed cozystack_namespace variable")
     assert_block = task.get("ansible.builtin.assert", {})
     that = assert_block.get("that") or []
     matched = [
         clause for clause in that
-        if "cozystack_namespace" in clause and "cozy-system" in clause
+        if "cozystack_namespace" in clause and "is not defined" in clause
     ]
     assert matched, (
-        "assert must check cozystack_namespace == 'cozy-system'; got %r"
+        "assert must check `cozystack_namespace is not defined`; got %r"
         % that
     )
     fail_msg = assert_block.get("fail_msg") or ""
-    assert "cozy-system" in fail_msg and "chart" in fail_msg.lower(), (
-        "fail_msg must mention 'cozy-system' and the chart constraint; "
-        "got %r" % fail_msg
+    for token in ("cozystack_namespace", "removed", "cozy-system"):
+        assert token in fail_msg, (
+            "fail_msg must mention %r so users get an actionable upgrade "
+            "signal; got %r" % (token, fail_msg)
+        )
+
+
+def test_role_does_not_reference_removed_cozystack_namespace():
+    # Once the variable is removed from defaults, leaving any
+    # `{{ cozystack_namespace }}` reference in tasks or templates
+    # causes an undefined-variable failure mid-run. Lock down the
+    # invariant: the only places the identifier may appear are the
+    # rejection assert task above and ansible/markdown comments.
+    import re
+
+    role_files = [
+        "roles/cozystack/tasks/main.yml",
+        "roles/cozystack/tasks/compute-master-nodes.yml",
+        "roles/cozystack/tasks/validate-external-ips.yml",
+        "roles/cozystack/templates/platform-package.yml.j2",
+        "roles/cozystack/defaults/main.yml",
+    ]
+    offenders = []
+    for relpath in role_files:
+        full = os.path.join(REPO_ROOT, relpath)
+        if not os.path.exists(full):
+            continue
+        with open(full, "r", encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, start=1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue  # ansible comment
+                # Allow the rejection-assert lines that name the
+                # variable as a string identifier, not a Jinja ref.
+                if "is not defined" in line or "cozystack_namespace was removed" in line:
+                    continue
+                if "Remove cozystack_namespace" in line or "Reject removed cozystack_namespace" in line:
+                    continue
+                if re.search(r"{{\s*cozystack_namespace", line):
+                    offenders.append("%s:%d: %s" % (relpath, lineno, stripped))
+    assert not offenders, (
+        "cozystack_namespace was removed from defaults; remaining "
+        "Jinja references will fail mid-run. Replace with literal "
+        "'cozy-system' to match the chart. Offenders:\n%s"
+        % "\n".join(offenders)
     )
 
 
 def test_role_refuses_to_overwrite_foreign_helm_owner():
     # Adopting an existing cozy-system namespace is safe ONLY when
     # it carries no helm metadata or is already owned by this role's
-    # release. If managed-by=Helm and release-name points at a
-    # *different* helm release, the role must fail rather than
-    # hijack ownership.
+    # release. If any helm-ownership indicator (managed-by label OR
+    # release-name annotation OR release-namespace annotation) points
+    # at a different helm release, the role must fail rather than
+    # hijack ownership. Gating purely on managed-by would miss the
+    # rare partial-write state.
     tasks = _load_role_tasks()
     task = _find_role_task(
         tasks,
@@ -146,23 +191,20 @@ def test_role_refuses_to_overwrite_foreign_helm_owner():
     when = task.get("when") or []
     if isinstance(when, str):
         when = [when]
-    helm_check = [
-        c for c in when
-        if "managed-by" in c and "Helm" in c
-    ]
-    assert helm_check, (
-        "fail must gate on labels[app.kubernetes.io/managed-by] == "
-        "'Helm' so missing-metadata namespaces still get adopted"
-    )
-    mismatch_check = [
-        c for c in when
-        if "release_name" in c.replace("-", "_")
-        and "cozystack_release_name" in c
-    ]
-    assert mismatch_check, (
-        "fail must gate on release-name annotation differing from "
-        "cozystack_release_name"
-    )
+    # Flatten the conditions to a single string for substring checks
+    when_blob = " ".join(when)
+    # The strengthened check must reference all three indicators.
+    for marker in ("managed-by", "release_name", "release_namespace"):
+        assert marker in when_blob, (
+            "fail `when:` must reference %r so a partial-write state "
+            "(annotations set but label missing, or vice versa) is "
+            "still detected. Got: %r" % (marker, when)
+        )
+    # And must compare against this role's release identity.
+    for var in ("cozystack_release_name", "cozystack_release_namespace"):
+        assert var in when_blob, (
+            "fail `when:` must compare against %r" % var
+        )
 
 
 # prepare-ubuntu.yml — auto-skip on 26.04+

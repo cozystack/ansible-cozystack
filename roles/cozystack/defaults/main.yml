@@ -15,11 +15,11 @@ cozystack_chart_version: "1.3.1"
 # Helm release name
 cozystack_release_name: "cozy-installer"
 
-# Kubernetes namespace where Cozystack operator and resources live
-cozystack_namespace: "cozy-system"
-
 # Namespace for the Helm release secret (the chart creates cozy-system
-# via its own template, so the release must live in a pre-existing namespace)
+# via its own template, so the release must live in a pre-existing namespace).
+# The operator namespace itself is fixed at `cozy-system` by the chart
+# (templates/cozystack-operator.yaml hardcodes the literal); there is no
+# values key to override it, so this role no longer exposes a variable.
 cozystack_release_namespace: "kube-system"
 
 # Operator deployment variant: generic, talos, hosted
