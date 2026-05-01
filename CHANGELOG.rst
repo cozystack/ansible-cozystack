@@ -2,41 +2,53 @@
 cozystack.installer Release Notes
 =================================
 
-v1.2.3
-======
-
-- Drop ``ansible.utils`` collection dependency and ``netaddr`` Python
-  package requirement. Master node IP validation now uses a bundled
-  ``cozystack.installer.is_ip_address`` Jinja2 test backed by the
-  Python standard library ``ipaddress`` module.
-- Add IPv6 inventory fixture and CI coverage for IPv6 host keys.
-
-v1.2.2
-======
-
-Synced with Cozystack v1.2.2.
-
-- Bump ``cozystack_chart_version`` to ``1.2.2``
-
-v1.2.1
-======
-
-Synced with Cozystack v1.2.1.
-
-- Bump ``cozystack_chart_version`` to ``1.2.1``
-- Derive ``MASTER_NODES`` for kube-ovn from the ``server`` inventory
-  group; add ``cozystack_master_nodes`` override for multi-master setups
-- Validate master node entries are valid IP addresses, not hostnames
-
-v1.1.3
-======
-
-Synced with Cozystack v1.1.3.
-
-- Bump ``cozystack_chart_version`` to ``1.1.3``
 
 Unreleased
 ==========
+
+Ubuntu 26.04 LTS support and namespace adoption.
+
+- ``examples/ubuntu/`` now boots end-to-end on Ubuntu 26.04 LTS. Two
+  changes were needed:
+
+  - New playbook ``examples/ubuntu/prepare-sudo.yml`` switches the
+    ``sudo`` alternative from ``sudo-rs`` (Rust rewrite, default on
+    26.04) back to classical sudo at ``/usr/bin/sudo.ws``. ``sudo-rs``
+    does not honour ansible's privilege-escalation pseudo-tty and
+    every subsequent ``become: true`` task hangs with
+    ``Timeout (12s) waiting for privilege escalation prompt``. The
+    play uses ``raw`` so it runs before any become-dependent task and
+    is a no-op on releases that do not ship ``sudo-rs``.
+    ``examples/ubuntu/site.yml`` imports it first.
+  - ``Install Ubuntu-only extra kernel modules`` now skips when
+    ``cozystack_ubuntu_extra_packages`` is empty. Ubuntu 26.04 ships
+    ``openvswitch`` and ``vport-geneve`` in the main
+    ``linux-image-generic`` and has no ``linux-modules-extra-*`` for
+    kernel 7.x. Override the variable to ``[]`` in inventory on those
+    hosts; earlier releases keep the existing default.
+
+- The role now adopts the ``cozy-system`` namespace into the
+  cozy-installer helm release on first run if it already exists
+  out-of-band. Without this pre-task, ``helm install`` fails with
+  ``Namespace "cozy-system" exists and cannot be imported into the
+  current release: invalid ownership metadata`` whenever the
+  namespace was created manually, by a previous failed install, or
+  by a different chart that shares the namespace name. The pre-task
+  is a no-op when the namespace is absent or already carries matching
+  helm metadata, and refuses to proceed (rather than silently
+  hijacking) when the namespace is owned by a *different* helm
+  release.
+
+- **Breaking, but rarely set in practice**: the ``cozystack_namespace``
+  variable was removed from the role's defaults. The cozy-installer
+  chart hardcodes ``name: cozy-system`` in
+  ``templates/cozystack-operator.yaml`` and provides no values key
+  to override it; the variable was effectively a phantom that
+  silently broke the role's wait/patch tasks if changed. The role
+  now asserts at validation time that the variable is *unset* — any
+  inventory still defining it (even at the old default
+  ``cozy-system``) must remove the line. Replace any references in
+  custom playbooks with the literal ``cozy-system``.
 
 - New variable ``cozystack_external_ips`` (list, default ``[]``): external
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
@@ -99,6 +111,39 @@ Node prerequisites: comprehensive audit and install in examples.
   required because OpenZFS has not yet published an el10 release RPM;
   ``prepare-rhel.yml`` fails fast with a clear message until an entry is
   added to ``cozystack_zfs_release_rpm_by_major``.
+
+v1.2.3
+======
+
+- Drop ``ansible.utils`` collection dependency and ``netaddr`` Python
+  package requirement. Master node IP validation now uses a bundled
+  ``cozystack.installer.is_ip_address`` Jinja2 test backed by the
+  Python standard library ``ipaddress`` module.
+- Add IPv6 inventory fixture and CI coverage for IPv6 host keys.
+
+v1.2.2
+======
+
+Synced with Cozystack v1.2.2.
+
+- Bump ``cozystack_chart_version`` to ``1.2.2``
+
+v1.2.1
+======
+
+Synced with Cozystack v1.2.1.
+
+- Bump ``cozystack_chart_version`` to ``1.2.1``
+- Derive ``MASTER_NODES`` for kube-ovn from the ``server`` inventory
+  group; add ``cozystack_master_nodes`` override for multi-master setups
+- Validate master node entries are valid IP addresses, not hostnames
+
+v1.1.3
+======
+
+Synced with Cozystack v1.1.3.
+
+- Bump ``cozystack_chart_version`` to ``1.1.3``
 
 v1.1.2
 ======

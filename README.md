@@ -6,7 +6,7 @@ Supported targets:
 
 | Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
-| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04, Debian 12 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Ubuntu 26.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04, Debian 12 on OCI: 3-node multi-master, 87/87 HelmReleases Ready. Ubuntu 26.04: best-effort — see Known limitations for the sudo-rs and `linux-modules-extra` notes |
 | `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | Rocky 10 on OCI: 3-node multi-master, 87/87 HelmReleases Ready (`cozystack_enable_zfs: false` required — see Known limitations) |
 | `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
@@ -167,6 +167,9 @@ informational notice:
 
 Other subsystem notes:
 
+- **Ubuntu 26.04 LTS:** two changes to be aware of.
+  1. *Auto-applied by `examples/ubuntu/site.yml`*: `sudo-rs` ships as the default `/usr/bin/sudo` alternative and does not honour ansible's `become_method: sudo` privilege-escalation pseudo-tty — every `become: true` task hangs with `Timeout (12s) waiting for privilege escalation prompt`. The classical sudo binary is co-installed at `/usr/bin/sudo.ws`. `site.yml` imports `prepare-sudo.yml` first, which switches the `sudo` alternative back via `update-alternatives` using a `raw` command (so it works even when become is broken). The play is a no-op on releases without sudo-rs. If you bypass `site.yml` and call the prepare playbooks directly, run `prepare-sudo.yml` before any task with `become: true` on 26.04 hosts.
+  2. *Manual inventory setting on 26.04 hosts*: the playbook auto-skips `linux-modules-extra-*` on Ubuntu 26.04+ because the package no longer exists for kernel 7.x — `openvswitch` and `vport-geneve` are bundled into `linux-image-generic`. The auto-skip relies on `ansible_distribution_version`; on hosts where that fact is unreliable, set `cozystack_ubuntu_extra_packages: []` in inventory to skip the apt install explicitly.
 - **Cloud providers (Ubuntu on OCI, AWS, GCP):** stock Ubuntu cloud images ship an iptables INPUT chain that ends with `REJECT icmp-host-prohibited`, which blocks k3s ports 2380/6443 between nodes. Set `cozystack_flush_iptables: true` in your inventory so the prepare playbook flushes the INPUT chain before k3s installs. Oracle Linux images on OCI do not have this restriction out of the box.
 - **Rocky 10 / Alma 10 (and other RHEL 10 rebuilds):** the `iptables` userspace binary is not installed by default. `examples/rhel/prepare-rhel.yml` installs `iptables-nft` so the `cozystack_flush_iptables` task and k3s kube-proxy replacement have a working `iptables` wrapper over nftables.
 - **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.
@@ -310,9 +313,8 @@ Runs on `server[0]` only.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_chart_ref` | `oci://ghcr.io/cozystack/cozystack/cozy-installer` | Helm chart OCI reference |
-| `cozystack_chart_version` | `1.2.2` | Helm chart version |
+| `cozystack_chart_version` | `1.3.1` | Helm chart version |
 | `cozystack_release_name` | `cozy-installer` | Helm release name |
-| `cozystack_namespace` | `cozy-system` | Namespace for operator and resources |
 | `cozystack_release_namespace` | `kube-system` | Namespace for Helm release secret |
 | `cozystack_operator_variant` | `generic` | Operator variant: generic, talos, hosted |
 | `cozystack_api_server_port` | `6443` | API server port |

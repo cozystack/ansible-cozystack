@@ -23,7 +23,6 @@ cluster:
     # Cozystack configuration
     cozystack_api_server_host: "2001:db8::10"
     cozystack_api_server_port: "6443"
-    cozystack_namespace: "cozy-system"
     cozystack_platform_variant: "isp-full-generic"
     cozystack_create_platform_package: true
     cozystack_root_host: ""
