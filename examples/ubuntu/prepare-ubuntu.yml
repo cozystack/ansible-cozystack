@@ -477,6 +477,8 @@
     - name: Mask host drbd.service
       ansible.builtin.systemd:
         name: drbd.service
+        enabled: false
+        state: stopped
         masked: true
       when:
         - cozystack_enable_drbd_dkms | default(true) | bool
