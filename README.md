@@ -67,13 +67,30 @@ LINSTOR uses LVM thin pools by default for local block storage.
 
 #### Required: Kernel headers (Piraeus DRBD loader)
 
-LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source **against the running kernel** at runtime, so only kernel headers must be installed on the host — **no DRBD host packages are needed**. Pin the headers package to `ansible_kernel` so a staged-but-not-yet-booted kernel update doesn't install headers for the wrong kernel.
+LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source **against the running kernel** at runtime, so kernel headers must be installed on the host. Pin the headers package to `ansible_kernel` so a staged-but-not-yet-booted kernel update doesn't install headers for the wrong kernel.
 
 | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- |
 | `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` plus `kernel-modules-extra-{{ ansible_kernel }}` | `kernel-default-devel` (zypper resolves to running kernel — SUSE's NVR format differs from `uname -r`) |
 
 On Oracle Linux the playbook auto-detects the UEK kernel (`uek` substring in `ansible_kernel`) and installs `kernel-uek-devel-{{ ansible_kernel }}` / `kernel-uek-modules-extra-{{ ansible_kernel }}` instead. Oracle Linux is not on the validated-end-to-end list; this code path is retained best-effort for users who still run the example playbook there. ZFS automation skips on UEK kernels because OpenZFS does not publish kmod builds for UEK.
+
+#### Required on Ubuntu Secure Boot hosts: drbd-dkms
+
+The in-cluster compile path above produces unsigned modules. UEFI Secure Boot's kernel lockdown rejects them at `insmod` time with `Key was rejected by service`, breaking the satellite Pod boot. Common on bare-metal Ubuntu installs (Secure Boot is the firmware default on most modern boards) and on Secure-Boot-enabled cloud SKUs; standard cloud-VM images on AWS/GCP/Azure typically ship without it and the in-cluster path works as-is.
+
+`examples/ubuntu/prepare-ubuntu.yml` installs `drbd-dkms` from the LINBIT PPA on Ubuntu LTS hosts (22.04 / 24.04) so dkms+shim signs the module against a per-host MOK key. The Piraeus loader detects the host-loaded module and exits cleanly without attempting its own compile + insmod.
+
+`drbd-dkms` has a hard apt dependency on `drbd-utils` (≥ 9.28.0), so `drbdadm`/`drbdmeta`/`drbdsetup` land on the host transitively. They are unused at runtime: piraeus-operator's satellite container ships its own copy of `drbd-utils` and invokes that one. The host's `drbd.service` ships disabled by maintainer; the playbook also `systemctl mask`s it so a future `systemctl enable drbd` cannot accidentally race the satellite container. Net result: the only DRBD state managed on the host is the kernel module.
+
+On hosts where Secure Boot is disabled the module loads on first run and no MOK enrollment is needed; the prepare playbook is still safe to run because the dkms build succeeds with an unsigned key the kernel happily accepts under unenforced lockdown. On Secure Boot hosts, the dkms-generated MOK key must be enrolled at the shim console on the next reboot (Enroll MOK → View key → Continue → dkms password). The playbook tolerates the initial modprobe failure pending enrollment and emits a reminder; idempotent re-run after enrollment converges.
+
+Variables (define in inventory to override):
+
+- `cozystack_enable_drbd_dkms` (bool, default `true`): set `false` on Talos hosts (Talos ships signed DRBD modules in extensions) or where Secure Boot is disabled and you prefer the in-cluster compile path.
+- `cozystack_drbd_ppa` (string, default `ppa:linbit/linbit-drbd9-stack`): point at a local mirror of the LINBIT archive.
+
+The PPA-based path is automated only on Ubuntu releases LINBIT keeps current — Jammy (22.04 LTS) and Noble (24.04 LTS) as of 2026. Interim non-LTS releases (Oracular 24.10, Plucky 25.04, etc.) and the next LTS (Resolute 26.04) before LINBIT publishes for them are not in the LINBIT PPA, so the playbook skips the install and emits a notice on those hosts. The supported list is exposed as `cozystack_drbd_supported_releases` (default `[jammy, noble]`); operators can extend it from inventory once LINBIT publishes for a new series, without waiting for a collection release. Operators on unsupported releases must build and sign `drbd-dkms` manually, downgrade to a supported LTS, or disable Secure Boot. Debian is not automated either (no LINBIT Debian PPA). RHEL/SUSE need a separate flow (LINBIT-managed RPM repo + pre-signed kmods) and are out of scope for this collection.
 
 #### Required: Multipath DRBD blacklist
 
@@ -167,9 +184,10 @@ informational notice:
 
 Other subsystem notes:
 
-- **Ubuntu 26.04 LTS:** two changes to be aware of.
+- **Ubuntu 26.04 LTS:** three changes to be aware of.
   1. *Auto-applied by `examples/ubuntu/site.yml`*: `sudo-rs` ships as the default `/usr/bin/sudo` alternative and does not honour ansible's `become_method: sudo` privilege-escalation pseudo-tty — every `become: true` task hangs with `Timeout (12s) waiting for privilege escalation prompt`. The classical sudo binary is co-installed at `/usr/bin/sudo.ws`. `site.yml` imports `prepare-sudo.yml` first, which switches the `sudo` alternative back via `update-alternatives` using a `raw` command (so it works even when become is broken). The play is a no-op on releases without sudo-rs. If you bypass `site.yml` and call the prepare playbooks directly, run `prepare-sudo.yml` before any task with `become: true` on 26.04 hosts.
   2. *Manual inventory setting on 26.04 hosts*: the playbook auto-skips `linux-modules-extra-*` on Ubuntu 26.04+ because the package no longer exists for kernel 7.x — `openvswitch` and `vport-geneve` are bundled into `linux-image-generic`. The auto-skip relies on `ansible_distribution_version`; on hosts where that fact is unreliable, set `cozystack_ubuntu_extra_packages: []` in inventory to skip the apt install explicitly.
+  3. *DRBD via `drbd-dkms` is not automated on releases LINBIT does not publish for*: LINBIT's PPA only ships drbd-dkms for the LTS series they keep current (Jammy 22.04 + Noble 24.04 as of 2026). Interim releases (Oracular 24.10, Plucky 25.04) and the next LTS (Resolute 26.04) before LINBIT publishes are skipped with a notice; on Secure Boot hosts the in-cluster compile path will fail with `Key was rejected by service`. Build and sign `drbd-dkms` manually, downgrade to a supported LTS, extend `cozystack_drbd_supported_releases` from inventory once LINBIT publishes for your release, or disable Secure Boot.
 - **Cloud providers (Ubuntu on OCI, AWS, GCP):** stock Ubuntu cloud images ship an iptables INPUT chain that ends with `REJECT icmp-host-prohibited`, which blocks k3s ports 2380/6443 between nodes. Set `cozystack_flush_iptables: true` in your inventory so the prepare playbook flushes the INPUT chain before k3s installs. Oracle Linux images on OCI do not have this restriction out of the box.
 - **Rocky 10 / Alma 10 (and other RHEL 10 rebuilds):** the `iptables` userspace binary is not installed by default. `examples/rhel/prepare-rhel.yml` installs `iptables-nft` so the `cozystack_flush_iptables` task and k3s kube-proxy replacement have a working `iptables` wrapper over nftables.
 - **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.
@@ -345,6 +363,9 @@ vars to opt out of the corresponding prepare step:
 | `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules. Set `false` to skip. |
 | `cozystack_flush_iptables` | `false` | Example playbooks: flush the iptables INPUT chain before k3s installs. Set `true` on Ubuntu/Debian cloud images (OCI/AWS/GCP) where the default INPUT chain ends with `REJECT icmp-host-prohibited` and blocks k3s inter-node ports 2380/6443. |
 | `cozystack_zfs_release_rpm_extra` | `{}` | `examples/rhel/` only: merged on top of the built-in `cozystack_zfs_release_rpm_by_major` dict, so you can add (or override) a single EL-major → OpenZFS release RPM entry from inventory without wiping the base dict. Example: `{"10": "https://zfsonlinux.org/epel/zfs-release-X-Y.el10.noarch.rpm"}` once upstream ships one. |
+| `cozystack_enable_drbd_dkms` | `true` | `examples/ubuntu/` only: install `drbd-dkms` from the LINBIT PPA on Ubuntu LTS 22.04 / 24.04 hosts so DRBD's kernel module is signed via dkms+shim under Secure Boot. Set `false` on Talos hosts (Talos ships pre-signed DRBD modules in extensions) or where Secure Boot is disabled and the in-cluster compile path is preferred. The toggle stops *future* installs but does NOT undo a prior install — manually `apt purge drbd-dkms` and remove the LINBIT entry from `/etc/apt/sources.list.d/` if you flipped to `false` after a successful run. |
+| `cozystack_drbd_ppa` | `ppa:linbit/linbit-drbd9-stack` | `examples/ubuntu/` only: override to point at a Launchpad PPA mirror of the LINBIT archive. `ansible.builtin.apt_repository` resolves the signing key for `ppa:` URIs by querying Launchpad's REST API directly (no extra packages required). Non-Launchpad URIs (`deb http://internal-mirror/...`) work but you must manage the apt signing key separately — drop a keyring under `/etc/apt/keyrings/` and add `signed-by=` to the repo line. |
+| `cozystack_drbd_supported_releases` | `[jammy, noble]` | `examples/ubuntu/` only: list of Ubuntu release codenames LINBIT's PPA publishes drbd-dkms for. Extend from inventory when LINBIT adds a new series (e.g. `[jammy, noble, resolute]`) without waiting for a collection release. The playbook skips the install and emits a notice on Ubuntu hosts whose `ansible_distribution_release` is not in this list. |
 
 ## Using with k3s
 

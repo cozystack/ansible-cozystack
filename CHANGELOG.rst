@@ -6,6 +6,73 @@ cozystack.installer Release Notes
 Unreleased
 ==========
 
+Ubuntu Secure Boot: pre-install drbd-dkms from LINBIT PPA.
+
+- ``examples/ubuntu/prepare-ubuntu.yml`` now installs ``drbd-dkms``
+  from the LINBIT PPA on Ubuntu hosts and configures
+  ``options drbd usermode_helper=disabled`` via
+  ``/etc/modprobe.d/cozystack-drbd.conf``. On hosts where UEFI
+  Secure Boot is enabled (most bare-metal installs and Secure-Boot
+  cloud SKUs), kernel lockdown rejects the unsigned modules built
+  by piraeus-operator's in-cluster compile path
+  (``Key was rejected by service``). With drbd-dkms installed,
+  dkms+shim signs the module against a per-host MOK key and
+  piraeus-operator's loader auto-detects host-loaded DRBD and
+  exits cleanly.
+- ``drbd-dkms`` Depends on ``drbd-utils (>= 9.28.0)``, so the userspace
+  is pulled onto the host as a transitive apt dependency. It is
+  unused at runtime — piraeus-operator's satellite container ships
+  its own copy and invokes that one. The playbook runs
+  ``systemctl mask drbd.service`` on the host so the userspace
+  cannot be enabled by accident and race the satellite.
+- The ``/etc/modprobe.d/`` drop-in is written BEFORE drbd-dkms is
+  installed so any auto-modprobe triggered by a future package
+  postinst loads the module with ``usermode_helper=disabled`` —
+  without that param, piraeus-operator's loader die()s on the
+  host-loaded module.
+- The initial ``modprobe drbd`` is tolerated (``ignore_errors: true``)
+  because the dkms-generated MOK key is not enrolled until the
+  operator confirms it via the shim console on the next reboot.
+  Persistence in ``/etc/modules-load.d/`` is gated on a successful
+  modprobe so ``systemd-modules-load.service`` does not fail every
+  boot before MOK enrollment. A reminder task fires when the modprobe
+  is deferred, pointing at the enrollment step.
+- New opt-out variable ``cozystack_enable_drbd_dkms`` (default
+  ``true``) for Talos hosts or operators who deliberately use the
+  in-cluster compile path. New variable ``cozystack_drbd_ppa``
+  (default ``ppa:linbit/linbit-drbd9-stack``) for sites that mirror
+  the LINBIT archive internally — overridable from inventory (the
+  default is in the task's ``| default(...)`` filter, not in
+  play-level ``vars:`` where it would outrank inventory).
+- Automated only on Ubuntu releases LINBIT keeps current — Jammy
+  (22.04) and Noble (24.04) as of 2026. Interim non-LTS releases
+  (Oracular 24.10, Plucky 25.04) and the next LTS before LINBIT
+  publishes for it are skipped with a notice. Gating is by release
+  name (``ansible_distribution_release``), not version number, because
+  LINBIT's PPA is keyed by release name and version-based gates
+  silently leak interim releases. The supported list is exposed as
+  ``cozystack_drbd_supported_releases`` (default ``[jammy, noble]``)
+  so operators can extend it from inventory once LINBIT publishes
+  for a new series. Debian, RHEL, and SUSE are not automated either —
+  LINBIT does not publish a Debian PPA, and the RHEL/SUSE flow needs
+  a different repo plus pre-signed kmods.
+
+Fix: tolerated-modprobe pattern previously silenced its own gates.
+
+- The pre-existing ``Load ZFS kernel module now`` and
+  ``Enable multipathd service`` tasks used ``failed_when: false`` to
+  tolerate failures. Ansible's ``failed_when`` is evaluated after the
+  module returns and rewrites the registered variable's ``failed``
+  attribute to match — so every downstream gate of the form
+  ``when: _cozystack_X.failed | default(false)`` was permanently
+  False. The persistence drop-in for ZFS was written even when
+  modprobe failed (which then crashed
+  ``systemd-modules-load.service`` every boot), and the multipathd
+  warn task never fired. Switched to ``ignore_errors: true``, which
+  lets the module's outcome through to the registered variable while
+  still tolerating the failure for play-execution purposes. Same fix
+  applied to the new DRBD modprobe task.
+
 Ubuntu 26.04 LTS support and namespace adoption.
 
 - ``examples/ubuntu/`` now boots end-to-end on Ubuntu 26.04 LTS. Two
