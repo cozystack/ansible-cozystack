@@ -29,6 +29,11 @@
       # Kernel headers — Piraeus operator compiles DRBD 9.x at runtime.
       # Pin to ansible_kernel so headers match the running kernel.
       - "linux-headers-{{ ansible_kernel }}"
+      # gnupg is required by ansible.builtin.apt_repository for PPA
+      # signing-key fingerprint handling. Ubuntu 24.04+ removed
+      # apt-key, so gpg is the only path; stock cloud images already
+      # ship it but minimal/container images may not.
+      - gnupg
 
     # Ubuntu-only: linux-modules-extra-* ships openvswitch and geneve
     # on cloud/minimal kernels. Debian includes these in its base
@@ -86,6 +91,23 @@
       - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
       - { name: vm.swappiness, value: "1" }
 
+    # DRBD via dkms on Ubuntu hosts where the in-cluster compile path is
+    # unavailable (UEFI Secure Boot + kernel lockdown rejects the
+    # unsigned modules piraeus-operator builds in-cluster — "Key was
+    # rejected by service"). Pre-installing drbd-dkms lets dkms+shim
+    # sign the module with a per-host MOK key, and piraeus-operator's
+    # loader auto-detects host-loaded DRBD and exits cleanly. Secure
+    # Boot is the common case on bare-metal installs and some bare-metal
+    # cloud SKUs; standard cloud-VM images on AWS/GCP/Azure usually ship
+    # without Secure Boot enforcement and the in-cluster compile path
+    # works as before.
+    #
+    # Set cozystack_enable_drbd_dkms: false on Talos hosts (Talos ships
+    # signed DRBD modules in extensions) or where Secure Boot is
+    # disabled and you prefer the in-cluster compile path.
+    # Override cozystack_drbd_ppa from inventory to point at a local
+    # mirror of the LINBIT archive.
+
     # k3s server arguments required by Cozystack.
     # These disable built-in components that Cozystack replaces.
     cozystack_k3s_server_args: >-
@@ -109,7 +131,12 @@
       ansible.builtin.systemd:
         name: multipathd
         state: restarted
-      failed_when: false  # tolerated: same reason as the enable task below
+      # Handler — no register, no downstream gate consults the result,
+      # so failed_when: false is safe here. Tolerated reason: VMs /
+      # kernels without dm_multipath. (See CLAUDE.md for why
+      # ignore_errors is required for tasks WHOSE registered variable
+      # IS consulted downstream.)
+      failed_when: false
 
   tasks:
     - name: Create k3s_cluster group for k3s.orchestration
@@ -127,6 +154,19 @@
       ansible.builtin.set_fact:
         server_config_yaml: "{{ cozystack_k3s_server_config_yaml }}"
       when: server_config_yaml is not defined
+
+    # Single source of truth for the LINBIT-PPA-supported release
+    # codename list. Inventory may extend the list (e.g.
+    # `cozystack_drbd_supported_releases: [jammy, noble, resolute]`)
+    # once LINBIT publishes for a new series; the set_fact only fires
+    # when the inventory does not already define the variable, so
+    # inventory wins.
+    - name: Default cozystack_drbd_supported_releases when unset
+      ansible.builtin.set_fact:
+        cozystack_drbd_supported_releases:
+          - jammy
+          - noble
+      when: cozystack_drbd_supported_releases is not defined
 
     - name: Install required packages
       ansible.builtin.apt:
@@ -242,13 +282,16 @@
         enabled: true
         state: started
 
+    # ignore_errors (not failed_when: false) so the registered var
+    # keeps `failed` for the warn task below — failed_when: false
+    # would rewrite it to False and silence the warning.
     - name: Enable multipathd service
       ansible.builtin.systemd:
         name: multipathd
         enabled: true
         state: started
       register: _cozystack_multipathd
-      failed_when: false  # tolerated: VMs / kernels without dm_multipath
+      ignore_errors: true  # tolerated: VMs / kernels without dm_multipath
 
     - name: Warn if multipathd failed to start
       ansible.builtin.debug:
@@ -281,6 +324,10 @@
         - cozystack_enable_zfs | default(true) | bool
         - ansible_distribution == 'Ubuntu'
 
+    # ignore_errors (not failed_when: false) so the registered var
+    # keeps `failed` truthful for downstream gates — failed_when: false
+    # would rewrite it to False and break the persistence + warn tasks
+    # below.
     - name: Load ZFS kernel module now
       community.general.modprobe:
         name: zfs
@@ -288,7 +335,7 @@
       when:
         - cozystack_enable_zfs | default(true) | bool
         - ansible_distribution == 'Ubuntu'
-      failed_when: false  # tolerated: Secure Boot / unsigned-module hosts
+      ignore_errors: true  # tolerated: Secure Boot / unsigned-module hosts
 
     # Only persist zfs in modules-load.d if the module actually loaded —
     # otherwise systemd-modules-load.service will fail on every boot.
@@ -327,6 +374,191 @@
         ansible_distribution != 'Ubuntu' or
         (_cozystack_zfs_modprobe is defined and
          _cozystack_zfs_modprobe.failed | default(false))
+
+    # DRBD on Debian: not automated. LINBIT does not publish a Debian
+    # PPA, and the in-cluster compile path that piraeus-operator falls
+    # back to fails on Debian 12 hosts with Secure Boot enabled (same
+    # 'Key was rejected by service' as the Ubuntu case). Operators must
+    # build and sign drbd-dkms manually or disable Secure Boot.
+    - name: Warn that DRBD on Debian needs manual setup
+      ansible.builtin.debug:
+        msg: >-
+          NOTE: DRBD via dkms is not automated on Debian. piraeus-operator's
+          in-cluster compile path will fail on Secure Boot hosts. Either
+          disable Secure Boot, or build and sign drbd-dkms manually.
+          Set cozystack_enable_drbd_dkms: false to silence this notice.
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Debian'
+
+    # DRBD on Ubuntu releases LINBIT does not publish for: not
+    # automated. LINBIT's PPA only ships drbd-dkms for the LTS series
+    # they keep current (Jammy 22.04 + Noble 24.04 as of 2026);
+    # interim releases (Oracular 24.10, Plucky 25.04, …) and the
+    # next LTS (Resolute 26.04) before LINBIT publishes for them will
+    # see apt update fail on the PPA's missing Release file, then
+    # 'Unable to locate package drbd-dkms'. Gating is by release name
+    # because LINBIT's PPA is keyed by release name, not version
+    # number. Operators can extend cozystack_drbd_supported_releases
+    # from inventory once LINBIT publishes for a new series, without
+    # waiting for a collection release.
+    - name: Warn that DRBD via LINBIT PPA is unavailable on this Ubuntu release
+      ansible.builtin.debug:
+        msg: >-
+          NOTE: LINBIT's PPA does not publish drbd-dkms for Ubuntu
+          {{ ansible_distribution_release }} ({{ ansible_distribution_version }});
+          only the LTS series LINBIT keeps current are supported
+          (jammy / noble as of 2026; extend
+          cozystack_drbd_supported_releases from inventory once they
+          publish a new one). On Secure Boot hosts the in-cluster
+          compile path will fail with 'Key was rejected by service'.
+          Build and sign drbd-dkms manually, downgrade to a supported
+          LTS, or disable Secure Boot. Set
+          cozystack_enable_drbd_dkms: false to silence this notice.
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release not in cozystack_drbd_supported_releases
+
+    # DRBD via dkms from LINBIT PPA (Ubuntu releases listed in
+    # cozystack_drbd_supported_releases — jammy/noble by default;
+    # Debian + unsupported Ubuntu releases get the warn tasks above).
+    # Required for non-Talos installs on Secure Boot hosts;
+    # piraeus-operator's loader auto-detects the host-loaded module
+    # and skips compilation.
+    #
+    # Order matters: the modprobe.d drop-in is written BEFORE
+    # drbd-dkms is installed so any auto-modprobe triggered by the
+    # package's postinst (or future dkms hook changes) loads the
+    # module with usermode_helper=disabled. Without that param,
+    # piraeus-operator's loader die()s on the host-loaded module
+    # (see LINBIT/drbd docker/entry.sh).
+    - name: Configure DRBD module parameters
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/cozystack-drbd.conf
+        mode: "0644"
+        content: |
+          options drbd usermode_helper=disabled
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+
+    - name: Add LINBIT PPA for drbd-dkms
+      ansible.builtin.apt_repository:
+        repo: "{{ cozystack_drbd_ppa | default('ppa:linbit/linbit-drbd9-stack') }}"
+        state: present
+        update_cache: true
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+
+    # drbd-dkms has a hard apt dependency on drbd-utils (>= 9.28.0)
+    # and pulls it onto the host transitively. The host copy of
+    # drbdadm/drbdmeta/drbdsetup is never invoked at runtime —
+    # piraeus-operator's satellite container ships its own
+    # drbd-utils and uses that one. The host's drbd.service ships
+    # disabled by maintainer; we mask it below to prevent accidental
+    # `systemctl enable drbd` from conflicting with the satellite.
+    - name: Install drbd-dkms
+      ansible.builtin.apt:
+        name: drbd-dkms
+        state: present
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+
+    # Mask drbd.service so the host-side userspace cannot be enabled
+    # by accident. piraeus-operator manages all DRBD resources via its
+    # own satellite container; host-side drbd.service would race with
+    # it.
+    - name: Mask host drbd.service
+      ansible.builtin.systemd:
+        name: drbd.service
+        masked: true
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+
+    # ignore_errors (not failed_when: false) so the registered var
+    # preserves the module's `failed` flag — `failed_when: false`
+    # rewrites it to False and silently breaks every downstream gate
+    # in this play. Tolerated outcome is the same; introspectable
+    # state is not.
+    - name: Load DRBD kernel module now
+      community.general.modprobe:
+        name: drbd
+        params: usermode_helper=disabled
+      register: _cozystack_drbd_modprobe
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+      ignore_errors: true  # tolerated: Secure Boot before MOK enrollment
+
+    # Only persist drbd in modules-load.d if the module actually loaded —
+    # otherwise systemd-modules-load.service will fail on every boot.
+    - name: Load DRBD kernel module at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/cozystack-drbd.conf
+        mode: "0644"
+        content: "drbd\n"
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+        - _cozystack_drbd_modprobe is defined
+        - not (_cozystack_drbd_modprobe.failed | default(false))
+
+    - name: Warn if DRBD module failed to load
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: modprobe drbd failed ({{ _cozystack_drbd_modprobe.msg | default('unknown') }}).
+          On Secure Boot hosts the dkms-generated MOK key must be enrolled
+          via the shim console on first reboot (Enroll MOK -> View key ->
+          Continue -> dkms password). Re-run this playbook after enrollment;
+          piraeus-operator will not start until DRBD is loaded with
+          usermode_helper=disabled. Set cozystack_enable_drbd_dkms: false to silence.
+      when:
+        - cozystack_enable_drbd_dkms | default(true) | bool
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_release in cozystack_drbd_supported_releases
+        - _cozystack_drbd_modprobe is defined
+        - _cozystack_drbd_modprobe.failed | default(false)
+
+    # Remove the drop-in in any case where DRBD should not auto-load:
+    # opt-out, non-Ubuntu, Ubuntu release not in
+    # cozystack_drbd_supported_releases (LINBIT PPA does not ship for
+    # those), or modprobe failed pending MOK enrollment.
+    - name: Remove DRBD modules-load drop-in when not active
+      ansible.builtin.file:
+        path: /etc/modules-load.d/cozystack-drbd.conf
+        state: absent
+      when: >-
+        not (cozystack_enable_drbd_dkms | default(true) | bool) or
+        ansible_distribution != 'Ubuntu' or
+        ansible_distribution_release not in cozystack_drbd_supported_releases or
+        (_cozystack_drbd_modprobe is defined and
+         _cozystack_drbd_modprobe.failed | default(false))
+
+    # When the operator opts out (cozystack_enable_drbd_dkms: false),
+    # runs on a non-Ubuntu host, or runs on an Ubuntu release LINBIT's
+    # PPA does not publish for, the modprobe.d drop-in serves no
+    # purpose — remove it for symmetry with the modules-load.d
+    # cleanup. The modprobe-failure case is intentionally NOT in this
+    # `when:` — the param is still needed once the module loads at
+    # the next reboot after MOK enrollment.
+    - name: Remove DRBD modprobe.d drop-in when not active
+      ansible.builtin.file:
+        path: /etc/modprobe.d/cozystack-drbd.conf
+        state: absent
+      when: >-
+        not (cozystack_enable_drbd_dkms | default(true) | bool) or
+        ansible_distribution != 'Ubuntu' or
+        ansible_distribution_release not in cozystack_drbd_supported_releases
 
     # KubeVirt kernel modules (opt-out via cozystack_enable_kubevirt=false).
     # QEMU and libvirt run inside KubeVirt pods; no host packages needed.

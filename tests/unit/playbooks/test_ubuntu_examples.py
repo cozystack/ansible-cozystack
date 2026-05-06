@@ -228,3 +228,568 @@ def test_linux_modules_extra_auto_skips_on_26_04():
         "linux-modules-extra-* does not exist for kernel 7.x. "
         "Got: %r" % when
     )
+
+
+# prepare-ubuntu.yml — DRBD/Secure Boot invariants
+
+
+def test_drbd_modprobe_is_tolerated_via_ignore_errors():
+    # piraeus-operator's loader needs DRBD host-loaded with
+    # usermode_helper=disabled; on Secure Boot hosts the dkms key is not
+    # enrolled until the operator confirms MOK at the next reboot, so the
+    # initial modprobe must be tolerated. The tolerance MUST be expressed
+    # as `ignore_errors: true`, not `failed_when: false`. The latter
+    # rewrites the registered variable's `failed` field to False, which
+    # silently breaks the persistence and warn tasks that gate on
+    # `_cozystack_drbd_modprobe.failed`. ignore_errors preserves the
+    # module's actual outcome.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Load DRBD kernel module now")
+    assert task.get("ignore_errors") is True, (
+        "modprobe drbd must use `ignore_errors: true` so the registered "
+        "var preserves .failed for downstream gates; got ignore_errors=%r"
+        % task.get("ignore_errors")
+    )
+    assert "failed_when" not in task, (
+        "modprobe drbd must NOT use failed_when — it rewrites .failed "
+        "and breaks every downstream gate that consults the registered "
+        "variable. Use ignore_errors instead. Got task keys: %r"
+        % list(task.keys())
+    )
+    params = task.get("community.general.modprobe", {}).get("params", "")
+    assert "usermode_helper=disabled" in params, (
+        "modprobe must pass usermode_helper=disabled — without it "
+        "piraeus-operator's loader die()s on the host-loaded module. "
+        "Got params=%r" % params
+    )
+
+
+def test_zfs_modprobe_uses_ignore_errors_not_failed_when():
+    # Same bug fix applied to the pre-existing ZFS pattern: this PR
+    # copied the broken shape from there, so per the project rule it
+    # owns fixing both. Without this, the ZFS persistence gate at
+    # `Load ZFS kernel module at boot` writes /etc/modules-load.d/
+    # even when modprobe failed, which then crashes
+    # systemd-modules-load.service on every boot.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Load ZFS kernel module now")
+    assert task.get("ignore_errors") is True, (
+        "modprobe zfs must use `ignore_errors: true`; got %r"
+        % task.get("ignore_errors")
+    )
+    assert "failed_when" not in task, (
+        "modprobe zfs must NOT use failed_when (rewrites .failed). "
+        "Got task keys: %r" % list(task.keys())
+    )
+
+
+def test_multipathd_enable_uses_ignore_errors_not_failed_when():
+    # `Enable multipathd service` registers _cozystack_multipathd and
+    # the warn task downstream gates on `.failed`. failed_when: false
+    # would silently always-pass that gate. Same fix as DRBD/ZFS.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Enable multipathd service")
+    assert task.get("ignore_errors") is True, (
+        "Enable multipathd must use ignore_errors so the warn task "
+        "fires on real failure; got %r" % task.get("ignore_errors")
+    )
+    assert "failed_when" not in task, (
+        "Enable multipathd must NOT use failed_when. Got: %r"
+        % list(task.keys())
+    )
+
+
+def test_drbd_modules_load_drop_in_gated_on_modprobe_success():
+    # Persisting drbd in /etc/modules-load.d/ when modprobe failed (no
+    # MOK yet) makes systemd-modules-load.service fail every boot. The
+    # write task must be gated on `_cozystack_drbd_modprobe.failed` being
+    # false, mirroring the ZFS pattern.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Load DRBD kernel module at boot")
+    when = task.get("when") or []
+    when_blob = " ".join(when) if isinstance(when, list) else str(when)
+    assert "_cozystack_drbd_modprobe" in when_blob, (
+        "persistence gate must reference _cozystack_drbd_modprobe so "
+        "drbd is not written to modules-load.d when modprobe failed. "
+        "Got: %r" % when
+    )
+    assert "not (_cozystack_drbd_modprobe.failed" in when_blob, (
+        "persistence gate must require modprobe success: "
+        "`not (_cozystack_drbd_modprobe.failed | default(false))`. "
+        "Got: %r" % when
+    )
+
+
+def test_drbd_modprobe_d_writes_usermode_helper_disabled():
+    # piraeus-operator's loader (LINBIT/drbd docker/entry.sh) explicitly
+    # die()s on a host-loaded drbd module that does not have
+    # usermode_helper=disabled. Document the contract structurally so
+    # future edits don't drop the param.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Configure DRBD module parameters")
+    content = task.get("ansible.builtin.copy", {}).get("content", "")
+    assert "usermode_helper=disabled" in content, (
+        "/etc/modprobe.d/cozystack-drbd.conf must set "
+        "usermode_helper=disabled; got %r" % content
+    )
+
+
+def test_drbd_tasks_are_ubuntu_only_and_opt_outable():
+    # All DRBD install tasks must gate on Ubuntu, on the supported
+    # release list (LINBIT PPA is keyed by release name — version
+    # gating would let interim releases like Oracular 24.10 / Plucky
+    # 25.04 reach the PPA add task and fail mid-playbook on a 404
+    # Release file), and on cozystack_enable_drbd_dkms. Talos hosts
+    # and any operator who deliberately runs the in-cluster compile
+    # path must be able to skip the entire block from inventory.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    drbd_task_names = [
+        "Add LINBIT PPA for drbd-dkms",
+        "Install drbd-dkms",
+        "Configure DRBD module parameters",
+        "Load DRBD kernel module now",
+        "Load DRBD kernel module at boot",
+        "Mask host drbd.service",
+    ]
+    for name in drbd_task_names:
+        task = _find_task(plays, name)
+        when = task.get("when") or []
+        when_blob = " ".join(when) if isinstance(when, list) else str(when)
+        assert "cozystack_enable_drbd_dkms" in when_blob, (
+            "%r must gate on cozystack_enable_drbd_dkms for opt-out; "
+            "got when=%r" % (name, when)
+        )
+        assert "ansible_distribution == 'Ubuntu'" in when_blob, (
+            "%r must gate on Ubuntu — Debian/RHEL/SUSE need different "
+            "DRBD install paths; got when=%r" % (name, when)
+        )
+        # Gate by release name, not version number — LINBIT's PPA is
+        # keyed by release name, and version-based gates miss interim
+        # releases between current LTS and the next LTS (24.10 / 25.04
+        # would slip through `< 26.04`).
+        assert (
+            "ansible_distribution_release in cozystack_drbd_supported_releases"
+            in when_blob
+        ), (
+            "%r must gate on the bare "
+            "`ansible_distribution_release in cozystack_drbd_supported_releases` "
+            "(default is materialized once via set_fact at the top of "
+            "the play; per-task `default()` would let drift between "
+            "sites slip through). Got when=%r" % (name, when)
+        )
+
+
+def test_drbd_default_release_list_set_via_set_fact():
+    # Single source of truth. The default release list is materialized
+    # once via set_fact `Default cozystack_drbd_supported_releases when
+    # unset` at the top of tasks; every gate downstream reads the bare
+    # variable. Spreading `default([...])` across 11 task `when:`
+    # clauses risks drift (install vs cleanup vs warn site disagreeing
+    # on what the default is). This test pins the single source.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(
+        plays,
+        "Default cozystack_drbd_supported_releases when unset",
+    )
+    f = task.get("ansible.builtin.set_fact", {})
+    items = f.get("cozystack_drbd_supported_releases")
+    assert items == ["jammy", "noble"], (
+        "Default release list must be exactly ['jammy', 'noble'] — "
+        "those are the only series LINBIT's PPA currently publishes "
+        "drbd-dkms for. Adding a release that is not yet in the PPA "
+        "would cause apt update to fail on a 404 Release file. "
+        "Got: %r" % items
+    )
+    when = task.get("when")
+    assert when == "cozystack_drbd_supported_releases is not defined", (
+        "set_fact must only fire when the variable is not already "
+        "defined, so inventory overrides win. Got when=%r" % when
+    )
+
+
+def test_drbd_warn_on_unsupported_ubuntu_release():
+    # The warn task must fire on every Ubuntu release LINBIT does
+    # NOT publish for — that includes 24.10 (Oracular), 25.04
+    # (Plucky), 26.04 (Resolute), and any future series until the
+    # operator extends cozystack_drbd_supported_releases. Mirrors
+    # the Debian warn-task pattern.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(
+        plays,
+        "Warn that DRBD via LINBIT PPA is unavailable on this Ubuntu release",
+    )
+    when = task.get("when") or []
+    when_blob = " ".join(when) if isinstance(when, list) else str(when)
+    assert "ansible_distribution == 'Ubuntu'" in when_blob, (
+        "Ubuntu-release warn task must gate on Ubuntu; got %r" % when
+    )
+    assert (
+        "ansible_distribution_release not in" in when_blob
+        and "cozystack_drbd_supported_releases" in when_blob
+    ), (
+        "Ubuntu-release warn task must fire when the host's release "
+        "is NOT in cozystack_drbd_supported_releases (interim + new "
+        "LTS pre-publication). Got: %r" % when
+    )
+    assert "cozystack_enable_drbd_dkms" in when_blob, (
+        "Ubuntu-release warn task must respect the opt-out toggle; "
+        "got %r" % when
+    )
+
+
+def _task_index(plays, task_name):
+    # Find the index of a task within its play.tasks list.
+    for play in plays:
+        tasks = play.get("tasks", []) or []
+        for i, task in enumerate(tasks):
+            if task.get("name") == task_name:
+                return i
+    raise AssertionError("task %r not found" % task_name)
+
+
+def test_gnupg_is_in_required_packages():
+    # ansible.builtin.apt_repository with a `ppa:` URI needs `gpg` to
+    # process Launchpad's signing-key fingerprint. Ubuntu 24.04+
+    # removed apt-key, so gpg (from gnupg) is the only available
+    # path. Stock cloud images ship it but minimal/container images
+    # may not — add it explicitly to cozystack_packages so the
+    # PPA add task does not blow up with "Either apt-key or gpg
+    # binary is required, but neither could be found." in the wild.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    play = plays[0]
+    pkgs = play.get("vars", {}).get("cozystack_packages") or []
+    assert "gnupg" in pkgs, (
+        "cozystack_packages must include 'gnupg' so apt_repository's "
+        "PPA flow has gpg available on minimal Ubuntu images. "
+        "Got: %r" % pkgs
+    )
+
+
+def test_drbd_modprobe_d_written_before_apt_install():
+    # The /etc/modprobe.d/cozystack-drbd.conf drop-in must exist BEFORE
+    # drbd-dkms is installed. dkms postinst hooks have historically
+    # changed across distro versions; if a future drbd-dkms postinst
+    # auto-modprobes drbd, the module must already be configured with
+    # usermode_helper=disabled or piraeus-operator's loader die()s on
+    # the host-loaded module.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    modprobe_d_idx = _task_index(plays, "Configure DRBD module parameters")
+    install_idx = _task_index(plays, "Install drbd-dkms")
+    assert modprobe_d_idx < install_idx, (
+        "Configure DRBD module parameters (idx %d) must run BEFORE "
+        "Install drbd-dkms (idx %d) so any package-side modprobe "
+        "respects usermode_helper=disabled"
+        % (modprobe_d_idx, install_idx)
+    )
+
+
+def test_readme_does_not_cite_launchpadlib():
+    # ansible.builtin.apt_repository does NOT use python3-launchpadlib
+    # for PPA key resolution — it hits Launchpad's REST API directly
+    # via fetch_url. README must not cite launchpadlib as the
+    # mechanism, otherwise readers facing a non-PPA mirror will
+    # install an unused dependency or chase a phantom break.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    assert "python3-launchpadlib" not in readme, (
+        "README must not mention python3-launchpadlib as a PPA "
+        "key-resolution mechanism — apt_repository uses Launchpad's "
+        "REST API directly via fetch_url. Naming launchpadlib will "
+        "send readers down a dead-end install path."
+    )
+    assert "launchpadlib" not in readme, (
+        "Same as above: 'launchpadlib' is not part of the PPA flow "
+        "this collection uses."
+    )
+
+
+def test_no_launchpadlib_install_task():
+    # ansible.builtin.apt_repository with a `ppa:` URI does NOT need
+    # python3-launchpadlib — the module hits Launchpad's REST API
+    # directly via fetch_url (urllib-based) since at least
+    # ansible-core 2.10. Installing launchpadlib pulls a 6MB+
+    # transitive dependency chain (lazr.restfulclient, oauth,
+    # httplib2, keyring, ...) for no functional gain. Lock the
+    # absence in so the task does not creep back in.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    for play in plays:
+        for task in play.get("tasks", []) or []:
+            apt = task.get("ansible.builtin.apt", {}) or {}
+            name = apt.get("name")
+            names = name if isinstance(name, list) else [name]
+            for n in names:
+                assert n != "python3-launchpadlib", (
+                    "Do not install python3-launchpadlib — "
+                    "ansible.builtin.apt_repository with a ppa: URI "
+                    "uses Launchpad's REST API directly via fetch_url, "
+                    "no launchpadlib import. The package adds a 6MB+ "
+                    "transitive dependency chain for no functional "
+                    "gain. Found in task %r." % task.get("name")
+                )
+
+
+def test_drbd_ppa_var_overridable_from_inventory():
+    # cozystack_drbd_ppa must NOT be defined in play-level vars: —
+    # play-level vars outrank inventory, which would silently break
+    # the documented "override to point at a local mirror" use case.
+    # The default belongs in the task's `| default(...)` filter so
+    # inventory wins.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    for play in plays:
+        play_vars = play.get("vars", {}) or {}
+        assert "cozystack_drbd_ppa" not in play_vars, (
+            "cozystack_drbd_ppa must not be set in play-level `vars:` — "
+            "play vars outrank inventory and break the override path. "
+            "Move the default to `| default(...)` in the task using it."
+        )
+
+    task = _find_task(plays, "Add LINBIT PPA for drbd-dkms")
+    repo = task.get("ansible.builtin.apt_repository", {}).get("repo", "")
+    assert "default(" in repo and "linbit-drbd9-stack" in repo, (
+        "Add LINBIT PPA repo expression must use `| default('ppa:...')` "
+        "so the value comes from inventory if set; got %r" % repo
+    )
+
+
+def test_drbd_warn_task_fires_only_on_modprobe_failure():
+    # The warn-on-failure debug task must gate on the modprobe failure
+    # so it is silent on hosts where DRBD loaded fine. Without that
+    # gate, the reminder fires every run on every host and trains
+    # operators to ignore it.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Warn if DRBD module failed to load")
+    when = task.get("when") or []
+    when_blob = " ".join(when) if isinstance(when, list) else str(when)
+    assert "_cozystack_drbd_modprobe.failed" in when_blob, (
+        "warn task must gate on _cozystack_drbd_modprobe.failed so it "
+        "is silent on healthy hosts; got when=%r" % when
+    )
+
+
+def test_drbd_modprobe_d_cleanup_on_optout():
+    # Symmetric cleanup with modules-load.d: when the operator opts out,
+    # runs on a non-Ubuntu host, or runs on an Ubuntu release LINBIT's
+    # PPA does not publish for, /etc/modprobe.d/cozystack-drbd.conf
+    # should be removed too. Modprobe-failure case is intentionally
+    # excluded from this cleanup (param is needed once MOK is enrolled
+    # and the module loads at the next reboot).
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Remove DRBD modprobe.d drop-in when not active")
+    f = task.get("ansible.builtin.file", {})
+    assert f.get("state") == "absent", (
+        "modprobe.d cleanup must use state=absent; got %r" % f.get("state")
+    )
+    assert f.get("path") == "/etc/modprobe.d/cozystack-drbd.conf", (
+        "modprobe.d cleanup must remove the cozystack-drbd.conf drop-in; "
+        "got %r" % f.get("path")
+    )
+    when = task.get("when")
+    when_blob = " ".join(when) if isinstance(when, list) else str(when)
+    for marker in (
+        "cozystack_enable_drbd_dkms",
+        "ansible_distribution",
+        "cozystack_drbd_supported_releases",
+    ):
+        assert marker in when_blob, (
+            "modprobe.d cleanup `when:` must reference %r so opt-out, "
+            "non-Ubuntu, and unsupported-release cases are handled. "
+            "Got: %r" % (marker, when)
+        )
+    # And must NOT trigger on modprobe failure (param is still wanted).
+    assert "_cozystack_drbd_modprobe" not in when_blob, (
+        "modprobe.d cleanup must NOT trigger on modprobe failure — the "
+        "param is still needed once the module loads after MOK enrollment. "
+        "Got: %r" % when
+    )
+
+
+def test_drbd_cleanup_removes_drop_in_when_inactive():
+    # When the toggle is off, distro is not Ubuntu, the release is not
+    # in the supported list, or modprobe failed, the modules-load
+    # drop-in must be removed (otherwise systemd-modules-load.service
+    # tries an absent module every boot). Same shape as the ZFS cleanup
+    # task.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Remove DRBD modules-load drop-in when not active")
+    f = task.get("ansible.builtin.file", {})
+    assert f.get("state") == "absent", (
+        "cleanup task must use state=absent; got %r" % f.get("state")
+    )
+    assert f.get("path") == "/etc/modules-load.d/cozystack-drbd.conf", (
+        "cleanup must remove cozystack-drbd.conf; got %r" % f.get("path")
+    )
+    when = task.get("when")
+    when_blob = " ".join(when) if isinstance(when, list) else str(when)
+    for marker in (
+        "cozystack_enable_drbd_dkms",
+        "ansible_distribution",
+        "cozystack_drbd_supported_releases",
+        "_cozystack_drbd_modprobe",
+    ):
+        assert marker in when_blob, (
+            "cleanup `when:` must reference %r so all four inactive "
+            "cases (opt-out / non-Ubuntu / unsupported-release / "
+            "modprobe-failed) are covered. Got: %r" % (marker, when)
+        )
+
+
+def test_drbd_debian_warning_present():
+    # Debian users hit the same Secure Boot failure as Ubuntu but
+    # LINBIT does not publish a Debian PPA. A warn task must fire so
+    # Debian users know they need a manual flow rather than discover
+    # it via piraeus-operator crash-loop.
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Warn that DRBD on Debian needs manual setup")
+    when = task.get("when") or []
+    when_blob = " ".join(when) if isinstance(when, list) else str(when)
+    assert "ansible_distribution == 'Debian'" in when_blob, (
+        "Debian-warn task must fire only on Debian; got when=%r" % when
+    )
+    assert "cozystack_enable_drbd_dkms" in when_blob, (
+        "Debian-warn task must respect the opt-out toggle; got when=%r"
+        % when
+    )
+
+
+def test_drbd_service_masked_after_install():
+    # drbd-dkms pulls drbd-utils transitively which ships a drbd.service
+    # systemd unit. Although the unit is delivered disabled, a future
+    # `systemctl enable drbd` on the host would race piraeus-operator's
+    # satellite container. Mask the unit explicitly under the same gates
+    # as the install. (The release-list gate is asserted by
+    # test_drbd_tasks_are_ubuntu_only_and_opt_outable; here we just
+    # assert the systemd action is correct.)
+    plays = _load_playbook("examples/ubuntu/prepare-ubuntu.yml")
+    task = _find_task(plays, "Mask host drbd.service")
+    s = task.get("ansible.builtin.systemd", {})
+    assert s.get("name") == "drbd.service", (
+        "mask task must target drbd.service; got %r" % s.get("name")
+    )
+    assert s.get("masked") is True, (
+        "mask task must use masked: true; got %r" % s.get("masked")
+    )
+
+
+# Documentation drift guards
+
+
+def test_readme_documents_drbd_dkms_toggle():
+    # If the toggle exists in the playbook, README must mention it.
+    # Catches doc drift when someone renames or removes the var.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    for token in ("cozystack_enable_drbd_dkms", "cozystack_drbd_ppa"):
+        assert token in readme, (
+            "README.md must document the %r variable so operators "
+            "know how to opt out / override it." % token
+        )
+    # The flat "no DRBD host packages are needed" claim is no longer
+    # universally true — guard against it being silently reintroduced.
+    assert "no DRBD host packages are needed" not in readme, (
+        "README must not state 'no DRBD host packages are needed' as "
+        "an absolute — drbd-dkms is now installed on Secure Boot hosts."
+    )
+
+
+def test_readme_variables_table_lists_drbd_vars():
+    # The "Example playbook variables" table is the canonical reference
+    # operators consult — both drbd vars must appear there, not only
+    # buried inline in the prose section above.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    marker = "### Example playbook variables"
+    assert marker in readme, (
+        "README must keep the '%s' anchor so this test can scope to it"
+        % marker
+    )
+    section_start = readme.index(marker)
+    # Section ends at the next ## or ### heading, whichever comes first.
+    rest = readme[section_start + len(marker):]
+    next_h2 = rest.find("\n## ")
+    next_h3 = rest.find("\n### ")
+    candidates = [i for i in (next_h2, next_h3) if i != -1]
+    section_end = section_start + len(marker) + (
+        min(candidates) if candidates else len(rest)
+    )
+    section = readme[section_start:section_end]
+    for token in ("cozystack_enable_drbd_dkms", "cozystack_drbd_ppa"):
+        assert token in section, (
+            "%r must appear in the Example playbook variables table, "
+            "not only inline elsewhere — operators look up overrides "
+            "via the table." % token
+        )
+
+
+def test_readme_known_limitations_covers_26_04_drbd():
+    # The README's Ubuntu 26.04 LTS bullet must mention the DRBD/Secure
+    # Boot gap so operators don't read 'best-effort 26.04 supported'
+    # then run into a piraeus crash-loop they can't connect to anything
+    # in the docs.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    # Find the Ubuntu 26.04 LTS bullet.
+    anchor = "**Ubuntu 26.04 LTS:**"
+    assert anchor in readme, (
+        "README Known Limitations must keep the '%s' anchor" % anchor
+    )
+    # Slice from anchor to the next limitation bullet (line starting "- **").
+    start = readme.index(anchor)
+    rest = readme[start:]
+    next_bullet = rest.find("\n- **", 1)
+    end = start + (next_bullet if next_bullet != -1 else len(rest))
+    bullet = readme[start:end]
+    for token in ("drbd-dkms", "26.04", "Secure Boot"):
+        assert token in bullet, (
+            "Ubuntu 26.04 limitations bullet must mention %r so the "
+            "PPA-not-published gap is visible to operators. Got: %r"
+            % (token, bullet[:200])
+        )
+
+
+def test_claude_md_failed_when_guidance_updated():
+    # CLAUDE.md guides future contributors and AI agents; if it still
+    # says 'use failed_when: false for tolerated modprobe', the bug
+    # this PR fixes will reappear. The guidance must call out that
+    # failed_when: false rewrites .failed and direct readers to use
+    # ignore_errors when the registered var is consulted downstream.
+    claude_path = os.path.join(REPO_ROOT, "CLAUDE.md")
+    if not os.path.exists(claude_path):
+        return
+    with open(claude_path, "r", encoding="utf-8") as fh:
+        claude = fh.read()
+    assert "ignore_errors" in claude, (
+        "CLAUDE.md must mention ignore_errors as the right tool when "
+        "the registered variable is consulted downstream"
+    )
+    # Either spelling of the explanation is acceptable.
+    explained = (
+        "rewrites" in claude
+        or "ignore_errors: true" in claude
+    )
+    assert explained, (
+        "CLAUDE.md must explain WHY failed_when: false is wrong "
+        "(rewrites the registered .failed) — otherwise readers will "
+        "drop ignore_errors back to failed_when in future PRs."
+    )
+
+
+def test_claude_md_dkms_exception_documented():
+    # CLAUDE.md is the project-level guide for AI agents; if the rule
+    # there contradicts what the playbook does, agents will revert
+    # the change in future PRs. The exception must be spelled out.
+    claude_path = os.path.join(REPO_ROOT, "CLAUDE.md")
+    if not os.path.exists(claude_path):
+        return  # CLAUDE.md is optional; skip silently if absent
+    with open(claude_path, "r", encoding="utf-8") as fh:
+        claude = fh.read()
+    # Must mention the exception so the rule is no longer absolute.
+    assert "cozystack_enable_drbd_dkms" in claude or (
+        "drbd-dkms" in claude and "Secure Boot" in claude
+    ), (
+        "CLAUDE.md must document the drbd-dkms exception (Secure Boot "
+        "hosts) so the 'do NOT install' rule is no longer absolute."
+    )
