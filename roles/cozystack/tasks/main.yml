@@ -73,10 +73,12 @@
   become: true
   when: not ansible_check_mode
 
-# The cozy-installer chart templates `Namespace cozy-system`.
-# If that namespace was created out of band — by a manual
-# `kubectl create ns`, by a previous failed install, or by a
-# different chart — `helm install` fails with
+# `helm install --create-namespace` (set on the Install task below)
+# creates cozy-system on a fresh cluster, but if the namespace was
+# created out of band — by a manual `kubectl create ns`, by a previous
+# failed install, or by a different chart — both `--create-namespace`
+# and the chart's pre-install labeler hook silently no-op on the
+# existing namespace, and the subsequent `helm install` then fails with
 #   Namespace "cozy-system" exists and cannot be imported into the
 #   current release: invalid ownership metadata
 # Adopt the namespace by stamping helm release labels and
@@ -167,6 +169,13 @@
     chart_ref: "{{ cozystack_chart_ref }}"
     chart_version: "{{ cozystack_chart_version }}"
     release_namespace: "{{ cozystack_release_namespace }}"
+    # Chart 1.4.0 dropped the cozy-system Namespace template and ships
+    # a pre-install Helm hook that labels the namespace for PodSecurity
+    # (kubectl label namespace cozy-system pod-security.kubernetes.io/
+    # enforce=privileged). The hook assumes the namespace already
+    # exists; with release_namespace=cozy-system this flag makes helm
+    # create it before the hook runs.
+    create_namespace: true
     kubeconfig: "{{ cozystack_kubeconfig }}"
     binary_path: "{{ cozystack_helm_binary }}"
     values:
