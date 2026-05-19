@@ -235,9 +235,9 @@ jobs:
           --inventory tests/ci-inventory.yml
 
       # Namespace adoption regression test. Reproduces the failure
-      # mode: the cozy-installer chart templates Namespace
-      # cozy-system, and a `helm install` against an existing
-      # namespace without helm ownership metadata fails with
+      # mode: chart 1.4.0 expects --create-namespace to create
+      # cozy-system on a fresh install, but if the namespace already
+      # exists without helm ownership metadata, helm fails with
       #   Namespace "cozy-system" exists and cannot be imported into
       #   the current release: invalid ownership metadata
       # Strip both the helm release storage Secret (so helm forgets
@@ -256,7 +256,7 @@ jobs:
               meta.helm.sh/release-name- \
               meta.helm.sh/release-namespace-
           sudo kubectl --kubeconfig $KUBECONFIG \
-            delete secret --namespace kube-system \
+            delete secret --namespace cozy-system \
               --selector=owner=helm,name=cozy-installer
 
       - name: Test namespace adoption (re-install over orphan namespace)
@@ -274,10 +274,16 @@ jobs:
           release_name="$(sudo kubectl --kubeconfig $KUBECONFIG \
             get namespace cozy-system \
             --output jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')"
-          if [ "$managed_by" != "Helm" ] || [ "$release_name" != "cozy-installer" ]; then
+          release_namespace="$(sudo kubectl --kubeconfig $KUBECONFIG \
+            get namespace cozy-system \
+            --output jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}')"
+          if [ "$managed_by" != "Helm" ] \
+              || [ "$release_name" != "cozy-installer" ] \
+              || [ "$release_namespace" != "cozy-system" ]; then
             echo "ERROR: namespace adoption failed"
-            echo "  managed-by label:    '$managed_by' (expected 'Helm')"
-            echo "  release-name annot.: '$release_name' (expected 'cozy-installer')"
+            echo "  managed-by label:        '$managed_by' (expected 'Helm')"
+            echo "  release-name annot.:     '$release_name' (expected 'cozy-installer')"
+            echo "  release-namespace annot.: '$release_namespace' (expected 'cozy-system')"
             exit 1
           fi
           echo "OK: cozy-system namespace adopted into helm release"
@@ -325,4 +331,4 @@ jobs:
           sudo kubectl --kubeconfig $KUBECONFIG \
             annotate namespace cozy-system --overwrite \
               meta.helm.sh/release-name=cozy-installer \
-              meta.helm.sh/release-namespace=kube-system
+              meta.helm.sh/release-namespace=cozy-system

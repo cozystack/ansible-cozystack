@@ -3,8 +3,38 @@ cozystack.installer Release Notes
 =================================
 
 
-Unreleased
-==========
+v1.4.0
+======
+
+Synced with Cozystack v1.4.0.
+
+- Bump ``cozystack_chart_version`` to ``1.4.0``.
+
+- **Breaking**: ``cozystack_release_namespace`` default changed from
+  ``kube-system`` to ``cozy-system``. Chart 1.4.0 dropped the
+  ``Namespace cozy-system`` template and replaced it with a Helm
+  ``pre-install,pre-upgrade`` hook (``cozy-system-labeler`` Job) that
+  patches PodSecurity labels onto an existing ``cozy-system``
+  namespace. The hook assumes the namespace was already created by
+  the caller via ``helm install --create-namespace``; with the old
+  default of ``kube-system`` the ``--create-namespace`` flag would
+  no-op on the already-existing ``kube-system`` and the labeler hook
+  would loop on a missing ``cozy-system`` until the helm timeout
+  (5 minutes). The role now co-locates the helm release secret with
+  the operator namespace and passes ``create_namespace: true`` to
+  ``kubernetes.core.helm``, so ``cozy-system`` is born just-in-time
+  on a fresh cluster. Upgrade path for existing installations
+  pinned to 1.3.x: either uninstall and reinstall the release, or
+  move the existing release secret manually with
+  ``kubectl --namespace kube-system get secret --selector
+  owner=helm,name=cozy-installer --output yaml | sed
+  's/namespace: kube-system/namespace: cozy-system/' | kubectl apply
+  --filename - && kubectl --namespace kube-system delete secret
+  --selector owner=helm,name=cozy-installer``. Inventories that
+  override ``cozystack_release_namespace`` to a custom value should
+  align it with the namespace the chart's pre-install hook patches
+  (``cozy-system``) or accept that the hook will fail until the
+  custom namespace is created out of band.
 
 Ubuntu Secure Boot: pre-install drbd-dkms from LINBIT PPA.
 
