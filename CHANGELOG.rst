@@ -19,6 +19,26 @@ Unreleased
   ``isp-full-generic`` platform variant when nodes lack a native load
   balancer (cloud VMs, bare metal).
 
+v1.4.3
+======
+
+Bugfixes
+--------
+
+- Prepare playbooks now enable
+  ``device_ownership_from_security_context`` on the containerd CRI
+  plugin (k3s drop-in
+  ``config-v3.toml.d/10-cozystack-cri.toml``). KubeVirt's CDI importer
+  writes disk images into raw block volumes as a non-root pod, which
+  requires containerd to chown the block device to the pod's
+  SecurityContext; k3s disables this by default. Without it the
+  importer failed with ``blockdev: cannot open /dev/cdi-block-volume:
+  Permission denied``, the ``DataVolume`` hung in ``ImportInProgress``,
+  and VMs referencing the disk stayed ``Pending``. Gated behind
+  ``cozystack_enable_kubevirt``; drop-in directory overridable via
+  ``cozystack_k3s_containerd_dropin_dir`` for containerd 1.x clusters.
+
+
 v1.4.0
 ======
 

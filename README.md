@@ -168,6 +168,18 @@ tun
 kvm_intel  # or kvm_amd depending on the CPU
 ```
 
+#### Enabled by default: containerd device ownership for CDI block imports
+
+When KubeVirt is enabled, the prepare playbook drops a containerd CRI config that sets `device_ownership_from_security_context = true`. KubeVirt's CDI (Containerized Data Importer) writes VM disk images into raw **block** volumes from a non-root importer pod; containerd only chowns the block device to the pod's `SecurityContext` UID/GID when this option is on, and k3s ships it disabled. Without it the importer fails with `blockdev: cannot open /dev/cdi-block-volume: Permission denied`, the `DataVolume` is stuck in `ImportInProgress`, and every VM that references the disk stays `Pending` — one of the silent "VMs stuck in Pending" failure modes called out above.
+
+Written as a drop-in that containerd merges on top of k3s's generated `config.toml`:
+
+```text
+/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/10-cozystack-cri.toml
+```
+
+`config-v3.toml.d` and the `io.containerd.cri.v1.runtime` plugin table are the containerd 2.x (config version 3) paths shipped by current k3s. On a containerd 1.x cluster override `cozystack_k3s_containerd_dropin_dir` (and adjust the plugin table to `io.containerd.grpc.v1.cri`). The drop-in is read at first k3s start in the full pipeline; on a re-run against a running cluster a handler restarts k3s so the change takes effect.
+
 #### Known limitations
 
 ZFS support depends on the OS ecosystem and kernel flavor. The prepare
