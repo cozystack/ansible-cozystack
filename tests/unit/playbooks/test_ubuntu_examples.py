@@ -959,3 +959,31 @@ def test_readme_documents_dropin_rationale_and_restart():
         "cluster restarts k3s and should be done in a maintenance window. "
         "Section: %r" % section
     )
+
+
+def test_claude_md_documents_cdi_device_ownership_trap():
+    # This change adds a fourth silent-failure trap of the same class as
+    # the ones CLAUDE.md already enumerates (multipath DRBD blacklist,
+    # vhost_net, br_netfilter). The canonical "Critical silent-failure
+    # traps" list must include the containerd device-ownership trap so
+    # the project guidance does not go stale and a future contributor
+    # does not reintroduce the gap. Mirrors
+    # test_claude_md_dkms_exception_documented.
+    claude_path = os.path.join(REPO_ROOT, "CLAUDE.md")
+    if not os.path.exists(claude_path):
+        return  # CLAUDE.md is optional; skip silently if absent
+    with open(claude_path, "r", encoding="utf-8") as fh:
+        claude = fh.read()
+    assert "device_ownership_from_security_context" in claude, (
+        "CLAUDE.md must list the containerd "
+        "device_ownership_from_security_context trap alongside the "
+        "multipath/vhost_net/br_netfilter traps so the CDI block-import "
+        "failure mode is part of the canonical silent-failure list."
+    )
+    # The entry must be actionable — name the symptom so a reader can
+    # match it to what they observe.
+    assert "ImportInProgress" in claude or "cdi-block-volume" in claude, (
+        "CLAUDE.md device-ownership trap entry must name the observable "
+        "symptom (CDI importer Permission denied / DataVolume "
+        "ImportInProgress) so it is actionable, not just a flag name."
+    )
