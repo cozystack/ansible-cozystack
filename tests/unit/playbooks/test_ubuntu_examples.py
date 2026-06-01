@@ -917,3 +917,45 @@ def test_device_ownership_dropin_enabled_for_cdi_on_all_distros():
             "on the full pipeline k3s is not installed when prepare runs; "
             "got failed_when=%r" % (relpath, handler.get("failed_when"))
         )
+
+
+def test_readme_documents_dropin_rationale_and_restart():
+    # Two things a maintainer/operator must learn from the README section
+    # describing the drop-in, pinned against doc drift:
+    #   1. k3s has a native --nonroot-devices flag that sets the same
+    #      option; the section must acknowledge it and say why the drop-in
+    #      is used instead (uniform server+agent coverage, applies to a
+    #      running cluster) — otherwise a future maintainer rediscovers the
+    #      flag and assumes the drop-in was chosen out of ignorance.
+    #   2. the restart handler bounces k3s on a live re-run, which is
+    #      disruptive — operators must be warned to run it in a window.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    marker = "#### Enabled by default: containerd device ownership for CDI"
+    assert marker in readme, (
+        "README must keep the '%s...' anchor so this test can scope to it"
+        % marker
+    )
+    start = readme.index(marker)
+    rest = readme[start + len(marker):]
+    nxt = rest.find("\n#### ")
+    nxt_h3 = rest.find("\n### ")
+    candidates = [i for i in (nxt, nxt_h3) if i != -1]
+    end = start + len(marker) + (min(candidates) if candidates else len(rest))
+    section = readme[start:end]
+
+    assert "--nonroot-devices" in section, (
+        "README drop-in section must mention the native k3s "
+        "--nonroot-devices flag as the alternative, and why the drop-in "
+        "is used instead, so the design choice is documented. Section: %r"
+        % section
+    )
+    lowered = section.lower()
+    assert "restart" in lowered and (
+        "maintenance window" in lowered or "mid-day" in lowered
+    ), (
+        "README drop-in section must warn that a re-run against a live "
+        "cluster restarts k3s and should be done in a maintenance window. "
+        "Section: %r" % section
+    )

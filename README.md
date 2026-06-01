@@ -176,6 +176,10 @@ Written as a drop-in that containerd merges on top of k3s's generated `config.to
 
 `config-v3.toml.d` and the `io.containerd.cri.v1.runtime` plugin table are the containerd 2.x (config version 3) paths shipped by current k3s. On a containerd 1.x cluster override `cozystack_k3s_containerd_dropin_dir` (and adjust the plugin table to `io.containerd.grpc.v1.cri`). The drop-in is read at first k3s start in the full pipeline; on a re-run against a running cluster a handler restarts k3s so the change takes effect.
 
+k3s also exposes a native `--nonroot-devices` flag (valid on both server and agent) that sets the same containerd option. This collection uses the config drop-in instead because it applies uniformly to every node in the `cluster` group — including agent/worker nodes, for which the example playbooks do not wire `extra_agent_args` — and because it can be applied to an already-running cluster, which an install-time k3s flag cannot.
+
+The restart handler only fires when the drop-in is first created or its content changes; idempotent re-runs leave k3s untouched. When it does fire, `systemctl restart k3s` (or `k3s-agent`) briefly disrupts the control plane and the node's workloads on that host, so apply such a change in a maintenance window rather than casually mid-day.
+
 #### Known limitations
 
 ZFS support depends on the OS ecosystem and kernel flavor. The prepare playbooks skip ZFS automation gracefully in these cases and emit an informational notice:
