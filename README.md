@@ -12,9 +12,7 @@ Supported targets:
 
 Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.
 
-Deploys the Cozystack operator and Platform Package using the
-`kubernetes.core.helm` module with automatic Helm and helm-diff
-installation.
+Deploys the Cozystack operator and Platform Package using the `kubernetes.core.helm` module with automatic Helm and helm-diff installation.
 
 ## Prerequisites
 
@@ -30,9 +28,7 @@ ansible-galaxy collection install --requirements-file requirements.yml
 
 - SSH access to the target nodes
 
-The role automatically installs Helm and the
-[helm-diff](https://github.com/databus23/helm-diff) plugin
-on the control-plane node. No manual Helm installation is needed.
+The role automatically installs Helm and the [helm-diff](https://github.com/databus23/helm-diff) plugin on the control-plane node. No manual Helm installation is needed.
 
 ### Node Prerequisites
 
@@ -182,9 +178,7 @@ Written as a drop-in that containerd merges on top of k3s's generated `config.to
 
 #### Known limitations
 
-ZFS support depends on the OS ecosystem and kernel flavor. The prepare
-playbooks skip ZFS automation gracefully in these cases and emit an
-informational notice:
+ZFS support depends on the OS ecosystem and kernel flavor. The prepare playbooks skip ZFS automation gracefully in these cases and emit an informational notice:
 
 | OS / kernel | ZFS automation | Reason |
 | --- | --- | --- |
@@ -225,9 +219,7 @@ Enable and start:
 
 #### iptables (cloud providers)
 
-Cloud providers (OCI, AWS, GCP) may ship images with restrictive iptables
-INPUT rules that block inter-node Kubernetes traffic (API 6443, kubelet 10250,
-etcd 2379-2380) even when security groups allow it.
+Cloud providers (OCI, AWS, GCP) may ship images with restrictive iptables INPUT rules that block inter-node Kubernetes traffic (API 6443, kubelet 10250, etcd 2379-2380) even when security groups allow it.
 
 Fix: flush the INPUT chain and set policy to ACCEPT before deploying k3s.
 
@@ -261,11 +253,7 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 ```
 
-These CIDRs are the k3s defaults. The example prepare playbooks
-(e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the
-`server_config_yaml` variable used by `k3s.orchestration`. The role
-variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match —
-they default to the same values.
+These CIDRs are the k3s defaults. The example prepare playbooks (e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the `server_config_yaml` variable used by `k3s.orchestration`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
 
 ## Installation
 
@@ -285,8 +273,7 @@ collections:
 
 ## Quick start
 
-1. Create your environment (pick your distro — see `examples/ubuntu/`,
-   `examples/rhel/`, or `examples/suse/`):
+1. Create your environment (pick your distro — see `examples/ubuntu/`, `examples/rhel/`, or `examples/suse/`):
 
 ```text
 my-env/
@@ -326,9 +313,7 @@ Both stages are handled automatically by the `cozystack` role.
 
 ## Role: cozystack.installer.cozystack
 
-Installs Cozystack via the official `cozy-installer` Helm chart using
-the `kubernetes.core.helm` module with automatic Helm and helm-diff
-installation.
+Installs Cozystack via the official `cozy-installer` Helm chart using the `kubernetes.core.helm` module with automatic Helm and helm-diff installation.
 
 Runs on `server[0]` only.
 
@@ -365,9 +350,7 @@ Runs on `server[0]` only.
 
 ### Example playbook variables
 
-These variables are consumed only by the example prepare playbooks in
-`examples/*/`, not by the role itself. Set them as inventory host/group
-vars to opt out of the corresponding prepare step:
+These variables are consumed only by the example prepare playbooks in `examples/*/`, not by the role itself. Set them as inventory host/group vars to opt out of the corresponding prepare step:
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -383,8 +366,7 @@ vars to opt out of the corresponding prepare step:
 
 This collection is designed to work alongside [k3s.orchestration](https://github.com/k3s-io/k3s-ansible). The inventory structure (groups: `cluster`, `server`, `agent`) is fully compatible.
 
-Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`,
-or `examples/suse/`:
+Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`, or `examples/suse/`:
 
 ```yaml
 - name: Prepare nodes
@@ -405,12 +387,9 @@ On cloud providers with NAT (OCI, AWS, GCP), nodes have internal IPs different f
 
 ### Multi-master setup (kube-ovn RAFT)
 
-Kube-ovn requires `MASTER_NODES` — a comma-separated list of all
-control-plane node IPs for OVN RAFT consensus. By default, the role
-auto-detects these IPs from the `server` inventory group host keys.
+Kube-ovn requires `MASTER_NODES` — a comma-separated list of all control-plane node IPs for OVN RAFT consensus. By default, the role auto-detects these IPs from the `server` inventory group host keys.
 
-This works when host keys are internal IPs (the recommended inventory
-pattern):
+This works when host keys are internal IPs (the recommended inventory pattern):
 
 ```yaml
 server:
@@ -421,8 +400,7 @@ server:
       ansible_host: 203.0.113.11
 ```
 
-If your inventory uses hostnames or non-IP host keys, set
-`cozystack_master_nodes` explicitly:
+If your inventory uses hostnames or non-IP host keys, set `cozystack_master_nodes` explicitly:
 
 ```yaml
 cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
@@ -430,21 +408,11 @@ cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
 
 ### Automatic Helm installation
 
-The role installs Helm and the
-[helm-diff](https://github.com/databus23/helm-diff) plugin on the
-target node automatically. The `helm-diff` plugin enables true
-idempotency — repeated runs report no changes when the release is
-already up to date.
+The role installs Helm and the [helm-diff](https://github.com/databus23/helm-diff) plugin on the target node automatically. The `helm-diff` plugin enables true idempotency — repeated runs report no changes when the release is already up to date.
 
 ### Customizing variables
 
-The example prepare playbooks define internal variables (like
-`cozystack_k3s_server_args`) in the play `vars` section. User-facing
-variables such as `cozystack_k3s_extra_args` and
-`cozystack_flush_iptables` should be set **in the inventory**, not in
-the playbook. Ansible play `vars` take precedence over inventory
-variables, so defining them in both places causes the inventory values
-to be silently ignored.
+The example prepare playbooks define internal variables (like `cozystack_k3s_server_args`) in the play `vars` section. User-facing variables such as `cozystack_k3s_extra_args` and `cozystack_flush_iptables` should be set **in the inventory**, not in the playbook. Ansible play `vars` take precedence over inventory variables, so defining them in both places causes the inventory values to be silently ignored.
 
 ### Idempotency
 
