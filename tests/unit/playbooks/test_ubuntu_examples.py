@@ -960,6 +960,22 @@ def test_readme_documents_dropin_rationale_and_restart():
         "Section: %r" % section
     )
 
+    # The containerd-1.x guidance must be accurate: the drop-in content is
+    # hardcoded v3 and cozystack_k3s_containerd_dropin_dir only relocates
+    # the file, so 1.x operators must write their own drop-in. The README
+    # must not imply a one-variable 1.x path the code cannot honor.
+    assert "write your own" in lowered, (
+        "README drop-in section must tell containerd-1.x operators to "
+        "write their own drop-in — the v3 content is hardcoded and the "
+        "directory variable does not rewrite it. Section: %r" % section
+    )
+    assert "only relocates" in lowered or "does not rewrite" in lowered, (
+        "README must state that cozystack_k3s_containerd_dropin_dir only "
+        "relocates the file and does not change its (v3) content, so the "
+        "containerd-1.x instruction is not misleading. Section: %r"
+        % section
+    )
+
 
 def test_claude_md_documents_cdi_device_ownership_trap():
     # This change adds a fourth silent-failure trap of the same class as

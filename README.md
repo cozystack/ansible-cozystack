@@ -174,7 +174,7 @@ Written as a drop-in that containerd merges on top of k3s's generated `config.to
 /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/10-cozystack-cri.toml
 ```
 
-`config-v3.toml.d` and the `io.containerd.cri.v1.runtime` plugin table are the containerd 2.x (config version 3) paths shipped by current k3s. On a containerd 1.x cluster override `cozystack_k3s_containerd_dropin_dir` (and adjust the plugin table to `io.containerd.grpc.v1.cri`). The drop-in is read at first k3s start in the full pipeline; on a re-run against a running cluster a handler restarts k3s so the change takes effect.
+`config-v3.toml.d` and the `io.containerd.cri.v1.runtime` plugin table are the containerd 2.x (config version 3) paths shipped by current k3s (the collection pins `k3s_version: v1.36.1+k3s1`), and the drop-in content is hardcoded for that — `version = 3` and the v3 table. `cozystack_k3s_containerd_dropin_dir` only relocates the file; it does not rewrite the content. So on a containerd 1.x cluster (older k3s) this drop-in does not apply as-is — write your own under `config.toml.d/` with `version = 2` and the `io.containerd.grpc.v1.cri` table. The drop-in is read at first k3s start in the full pipeline; on a re-run against a running cluster a handler restarts k3s so the change takes effect.
 
 k3s also exposes a native `--nonroot-devices` flag (valid on both server and agent) that sets the same containerd option. This collection uses the config drop-in instead because it applies uniformly to every node in the `cluster` group — including agent/worker nodes, for which the example playbooks do not wire `extra_agent_args` — and because it can be applied to an already-running cluster, which an install-time k3s flag cannot.
 
