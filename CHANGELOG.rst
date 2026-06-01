@@ -19,8 +19,8 @@ Unreleased
   ``isp-full-generic`` platform variant when nodes lack a native load
   balancer (cloud VMs, bare metal).
 
-v1.4.3
-======
+Unreleased
+==========
 
 Bugfixes
 --------
