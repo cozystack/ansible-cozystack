@@ -1003,3 +1003,57 @@ def test_claude_md_documents_cdi_device_ownership_trap():
         "symptom (CDI importer Permission denied / DataVolume "
         "ImportInProgress) so it is actionable, not just a flag name."
     )
+
+
+def test_readme_variables_table_documents_containerd_dropin():
+    # The "Example playbook variables" table is the canonical reference
+    # operators consult. Two things must be true after this change:
+    #   1. the new cozystack_k3s_containerd_dropin_dir tunable appears in
+    #      the table (every other examples/* tunable does), and
+    #   2. the cozystack_enable_kubevirt row reflects that the toggle now
+    #      ALSO gates the containerd device-ownership drop-in, not just
+    #      the kernel modules — otherwise an operator flipping it to false
+    #      won't realise they also disable the CDI block-import fix.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    marker = "### Example playbook variables"
+    assert marker in readme, (
+        "README must keep the '%s' anchor so this test can scope to it"
+        % marker
+    )
+    section_start = readme.index(marker)
+    rest = readme[section_start + len(marker):]
+    next_h2 = rest.find("\n## ")
+    next_h3 = rest.find("\n### ")
+    candidates = [i for i in (next_h2, next_h3) if i != -1]
+    section_end = section_start + len(marker) + (
+        min(candidates) if candidates else len(rest)
+    )
+    section = readme[section_start:section_end]
+
+    assert "cozystack_k3s_containerd_dropin_dir" in section, (
+        "cozystack_k3s_containerd_dropin_dir must appear in the Example "
+        "playbook variables table — it is an overridable examples/* "
+        "tunable, and the table is where operators look for one."
+    )
+
+    # The kubevirt row specifically must mention the drop-in, so the
+    # expanded meaning of the toggle is visible at the row a reader scans.
+    kubevirt_rows = [
+        line for line in section.splitlines()
+        if "`cozystack_enable_kubevirt`" in line
+    ]
+    assert kubevirt_rows, (
+        "Example playbook variables table must have a "
+        "cozystack_enable_kubevirt row"
+    )
+    assert any(
+        "device_ownership" in row or "drop-in" in row or "CDI" in row
+        for row in kubevirt_rows
+    ), (
+        "the cozystack_enable_kubevirt row must note it also gates the "
+        "containerd device-ownership drop-in (CDI block imports), so "
+        "disabling KubeVirt prep is understood to disable that fix too. "
+        "Got rows: %r" % kubevirt_rows
+    )
