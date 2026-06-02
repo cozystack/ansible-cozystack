@@ -71,9 +71,16 @@ Shallow "looks right" research will be rejected in plan review.
 - Kernel modules on nodes:
   - Drop a file in `/etc/modules-load.d/cozystack*.conf` for persistence.
   - `community.general.modprobe` for immediate load.
-  - Use `failed_when: false` only when the failure is benign (module
-    built into kernel, only one of two vendor-specific modules applies);
-    document the reason inline.
+  - **`failed_when: false` rewrites the registered variable's `failed`
+    field to `False`.** That breaks every downstream gate of the form
+    `when: _var.failed | default(false)`. Use `failed_when: false`
+    ONLY when nothing reads the registered variable (e.g., handler
+    tasks, or modprobe tasks gated by a follow-up `stat` on
+    `/sys/module/<name>` instead of by `.failed`). When the registered
+    variable IS consulted by a downstream `when:`, use
+    `ignore_errors: true` instead — it preserves the module's actual
+    `failed` flag while still tolerating the failure for play
+    execution.
 - Kernel headers: Piraeus builds DRBD against the running kernel, not
   the staged one, so pin to the running kernel when the distro allows.
   - Ubuntu/Debian: `linux-headers-{{ ansible_kernel }}` works.
@@ -97,8 +104,32 @@ their own pods. Do **not** install on the host:
 
 - `qemu-kvm`, `libvirt*` — KubeVirt bundles these.
 - `openvswitch-switch` / `openvswitch` userspace — Kube-OVN bundles OVS.
-- `drbd-utils`, `drbd-dkms`, `kmod-drbd*` — Piraeus init-container
-  compiles DRBD 9.x from source at runtime (kernel headers are enough).
+- `drbd-utils` userspace (`drbdadm`, `drbdmeta`, `drbdsetup`) — Piraeus
+  ships these in the satellite container.
+
+**Exception**: `drbd-dkms` IS installed on Ubuntu LTS hosts (22.04 /
+24.04) where the in-cluster Piraeus compile path is unavailable —
+UEFI Secure Boot enabled, kernel lockdown rejects the unsigned
+modules built by the in-cluster compiler with `Key was rejected by
+service`. See `cozystack_enable_drbd_dkms` in
+`examples/ubuntu/prepare-ubuntu.yml`. `drbd-dkms` Depends on
+`drbd-utils (>= 9.28.0)`, so `drbdadm`/`drbdmeta`/`drbdsetup`
+land on the host as a transitive apt dependency. They are
+unused — the satellite container ships its own copy. The
+playbook `systemctl mask`s `drbd.service` so the host-side
+userspace cannot be enabled accidentally and race the satellite.
+Talos ships pre-signed DRBD modules in extensions and does not
+need this.
+
+The collection does not automate the equivalent flow on RHEL/SUSE
+(LINBIT-managed RPM repo + pre-signed kmods). Operators on those
+distros either build and sign drbd-dkms manually or disable Secure
+Boot. LINBIT's PPA is keyed by Ubuntu release name and currently
+publishes for jammy + noble; interim releases (oracular, plucky)
+and the next LTS pre-publication fall back to the same manual
+path. The supported list is exposed as
+``cozystack_drbd_supported_releases`` so operators can extend it
+from inventory once LINBIT publishes for a new series.
 
 The host only needs the kernel modules and, for KVM, a working `/dev/kvm`.
 
