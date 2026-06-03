@@ -1,0 +1,218 @@
+---
+# Verify the host LVM global_filter task used by the example prepare
+# playbooks (examples/*/prepare-*.yml). The lineinfile regexp/insertafter
+# pair and the templated `line` value are mirrored here verbatim; keep them
+# in sync with the playbooks. The task is exercised against throwaway
+# lvm.conf fixtures in /tmp so no root or real LVM is required.
+- name: Test host LVM global_filter task behaviour
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Expected rendered line for the shipped default (to_json output).
+    _lvm_expected_default_line: '        global_filter = ["r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|", "r|^/dev/loop.*|"]'
+    # The exact templated value from the prepare playbooks. Re-rendered on
+    # every use, so a task-level cozystack_lvm_global_filter override is
+    # picked up automatically.
+    _lvm_filter_line: '        global_filter = {{ cozystack_lvm_global_filter |
+      default(["r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|",
+      "r|^/dev/loop.*|"]) | to_json }}'
+    _lvm_fixture_stock: /tmp/cozystack-test-lvm-stock.conf
+    _lvm_fixture_nofilter: /tmp/cozystack-test-lvm-nofilter.conf
+    _lvm_fixture_override: /tmp/cozystack-test-lvm-override.conf
+    _lvm_fixture_indented: /tmp/cozystack-test-lvm-indented.conf
+  tasks:
+    - name: Render the shipped default and assert valid LVM global_filter syntax
+      ansible.builtin.assert:
+        that:
+          - _lvm_filter_line == _lvm_expected_default_line
+        fail_msg: >-
+          Default global_filter drifted from the playbooks. Rendered
+          '{{ _lvm_filter_line }}', expected '{{ _lvm_expected_default_line }}'.
+
+    # --- Stock lvm.conf: a commented global_filter already lives inside the
+    # devices block (as shipped by upstream lvm2). The regexp must replace it
+    # in place rather than appending a second copy at EOF.
+    - name: Create stock-like lvm.conf fixture
+      ansible.builtin.copy:
+        dest: "{{ _lvm_fixture_stock }}"
+        mode: "0644"
+        content: |
+          # Sample lvm.conf
+          devices {
+              dir = "/dev"
+              scan = [ "/dev" ]
+              # global_filter = [ "a|.*/|" ]
+          }
+          global {
+              umask = 63
+          }
+
+    - name: Apply global_filter to stock fixture (first run)
+      ansible.builtin.lineinfile:
+        path: "{{ _lvm_fixture_stock }}"
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: "{{ _lvm_filter_line }}"
+      register: _stock_first
+
+    - name: Apply global_filter to stock fixture (second run)
+      ansible.builtin.lineinfile:
+        path: "{{ _lvm_fixture_stock }}"
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: "{{ _lvm_filter_line }}"
+      register: _stock_second
+
+    - name: Read back the stock fixture
+      ansible.builtin.slurp:
+        src: "{{ _lvm_fixture_stock }}"
+      register: _stock_slurp
+
+    - name: Assert global_filter replaced in place inside the devices block
+      ansible.builtin.assert:
+        that:
+          - _stock_first is changed
+          - _stock_second is not changed
+          - _lvm_expected_default_line in _lines
+          - "'    # global_filter = [ \"a|.*/|\" ]' not in _lines"
+          - _lines.index(_lvm_expected_default_line) < _lines.index('}')
+        fail_msg: >-
+          global_filter was not replaced in place inside devices {} on the
+          stock fixture.
+      vars:
+        _lines: "{{ (_stock_slurp.content | b64decode).split('\n') }}"
+
+    # --- Fresh lvm.conf with no global_filter at all: the insertafter anchor
+    # must drop the line immediately after the `devices {` header.
+    - name: Create lvm.conf fixture without any global_filter
+      ansible.builtin.copy:
+        dest: "{{ _lvm_fixture_nofilter }}"
+        mode: "0644"
+        content: |
+          devices {
+              dir = "/dev"
+          }
+          global {
+              umask = 63
+          }
+
+    - name: Apply global_filter to no-filter fixture (first run)
+      ansible.builtin.lineinfile:
+        path: "{{ _lvm_fixture_nofilter }}"
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: "{{ _lvm_filter_line }}"
+      register: _nofilter_first
+
+    - name: Apply global_filter to no-filter fixture (second run)
+      ansible.builtin.lineinfile:
+        path: "{{ _lvm_fixture_nofilter }}"
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: "{{ _lvm_filter_line }}"
+      register: _nofilter_second
+
+    - name: Read back the no-filter fixture
+      ansible.builtin.slurp:
+        src: "{{ _lvm_fixture_nofilter }}"
+      register: _nofilter_slurp
+
+    - name: Assert global_filter inserted right after the devices header
+      ansible.builtin.assert:
+        that:
+          - _nofilter_first is changed
+          - _nofilter_second is not changed
+          - _lines[(_lines.index('devices {') | int) + 1] == _lvm_expected_default_line
+        fail_msg: >-
+          global_filter was not inserted immediately after 'devices {' on the
+          no-filter fixture.
+      vars:
+        _lines: "{{ (_nofilter_slurp.content | b64decode).split('\n') }}"
+
+    # --- Override: dropping the dm- entry from cozystack_lvm_global_filter
+    # (the LVM-on-LUKS / multipath escape hatch) must render the shorter list.
+    - name: Create fixture for override case
+      ansible.builtin.copy:
+        dest: "{{ _lvm_fixture_override }}"
+        mode: "0644"
+        content: |
+          devices {
+              dir = "/dev"
+          }
+
+    - name: Apply an overridden global_filter (dm- dropped)
+      ansible.builtin.lineinfile:
+        path: "{{ _lvm_fixture_override }}"
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: "{{ _lvm_filter_line }}"
+      vars:
+        cozystack_lvm_global_filter:
+          - "r|^/dev/drbd.*|"
+          - "r|^/dev/loop.*|"
+      register: _override_run
+
+    - name: Read back the override fixture
+      ansible.builtin.slurp:
+        src: "{{ _lvm_fixture_override }}"
+      register: _override_slurp
+
+    - name: Assert the overridden filter rendered without the dm- entry
+      ansible.builtin.assert:
+        that:
+          - _override_run is changed
+          - '''        global_filter = ["r|^/dev/drbd.*|", "r|^/dev/loop.*|"]'' in _content'
+          - "'/dev/dm-' not in _content"
+        fail_msg: >-
+          Overridden cozystack_lvm_global_filter did not render as expected.
+      vars:
+        _content: "{{ _override_slurp.content | b64decode }}"
+
+    # --- Robustness: an indented `devices {` header (leading whitespace or
+    # compact bracing) must still anchor the insert. The stricter `^devices {`
+    # would miss this and append global_filter at EOF, outside the block.
+    - name: Create lvm.conf fixture with an indented devices header
+      ansible.builtin.copy:
+        dest: "{{ _lvm_fixture_indented }}"
+        mode: "0644"
+        content: |
+          config {
+              checks = 1
+          }
+              devices {
+                  dir = "/dev"
+              }
+
+    - name: Apply global_filter to the indented fixture
+      ansible.builtin.lineinfile:
+        path: "{{ _lvm_fixture_indented }}"
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: "{{ _lvm_filter_line }}"
+      register: _indented_run
+
+    - name: Read back the indented fixture
+      ansible.builtin.slurp:
+        src: "{{ _lvm_fixture_indented }}"
+      register: _indented_slurp
+
+    - name: Assert global_filter anchored to the indented devices header
+      ansible.builtin.assert:
+        that:
+          - _indented_run is changed
+          - _lines[(_lines.index('    devices {') | int) + 1] == _lvm_expected_default_line
+        fail_msg: >-
+          global_filter was not anchored to the indented 'devices {' header;
+          the insertafter regex is not whitespace-tolerant.
+      vars:
+        _lines: "{{ (_indented_slurp.content | b64decode).split('\n') }}"
+
+    - name: Remove fixtures
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ _lvm_fixture_stock }}"
+        - "{{ _lvm_fixture_nofilter }}"
+        - "{{ _lvm_fixture_override }}"
+        - "{{ _lvm_fixture_indented }}"
