@@ -3,6 +3,7 @@ cozystack.installer Release Notes
 =================================
 
 Unreleased
+==========
 
 - CI: new ``hack/check-versions.sh`` invariant check runs in the ``Lint``
   job and fails the build if version strings drift across the three
@@ -26,13 +27,6 @@ Unreleased
   Talos machine config. The filter is overridable from inventory via
   ``cozystack_lvm_global_filter`` for hosts whose own PVs sit on
   device-mapper devices (LVM-on-LUKS, multipath).
-
-Unreleased
-==========
-
-Bugfixes
---------
-
 - Prepare playbooks now enable
   ``device_ownership_from_security_context`` on the containerd CRI
   plugin (k3s drop-in
