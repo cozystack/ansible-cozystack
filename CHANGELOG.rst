@@ -18,6 +18,12 @@ Unreleased
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
   balancer (cloud VMs, bare metal).
+- Prepare playbooks now set an LVM ``global_filter`` in
+  ``/etc/lvm/lvm.conf`` excluding ``/dev/drbd*``, ``/dev/dm-*``,
+  ``/dev/zd*`` and ``/dev/loop*`` so the host LVM does not scan or
+  activate volume groups backed by LINSTOR/DRBD volumes or located
+  inside loop-mounted images. Mirrors the global_filter shipped in the
+  Talos machine config.
 
 Unreleased
 ==========

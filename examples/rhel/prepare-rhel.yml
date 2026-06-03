@@ -281,6 +281,18 @@
           }
       notify: Restart multipathd
 
+    # Exclude DRBD, device-mapper, zvol and loop devices from the host's
+    # LVM device scanning. Without this the host LVM may scan and activate
+    # volume groups backed by LINSTOR/DRBD volumes — or located inside
+    # loop-mounted images — making them unavailable to the satellite.
+    # Mirrors the global_filter shipped in the Talos machine config.
+    - name: Exclude virtual and loop devices from host LVM scanning
+      ansible.builtin.lineinfile:
+        path: /etc/lvm/lvm.conf
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^devices {'
+        line: '        global_filter = [ "r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|", "r|^/dev/loop.*|" ]'
+
     - name: Configure sysctl parameters
       ansible.posix.sysctl:
         name: "{{ item.name }}"
