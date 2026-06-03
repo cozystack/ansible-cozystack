@@ -37,6 +37,11 @@ Bugfixes
   and VMs referencing the disk stayed ``Pending``. Gated behind
   ``cozystack_enable_kubevirt``; drop-in directory overridable via
   ``cozystack_k3s_containerd_dropin_dir`` for containerd 1.x clusters.
+  Setting ``cozystack_enable_kubevirt`` to ``false`` removes a
+  previously written drop-in so the host state matches the toggle, and
+  the restart handler only restarts a k3s unit that is actually present
+  (a genuine restart failure now fails the play instead of being
+  silently ignored).
 
 
 v1.4.0

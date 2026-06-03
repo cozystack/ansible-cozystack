@@ -897,7 +897,8 @@ def test_device_ownership_dropin_enabled_for_cdi_on_all_distros():
         # The restart handler applies the drop-in on running clusters and
         # must tolerate a missing unit: only the server OR agent unit
         # exists on a node, and on the full pipeline k3s is not installed
-        # yet when prepare runs.
+        # yet when prepare runs. It must do so WITHOUT masking a genuine
+        # restart failure of a unit that IS present.
         handler = _find_handler(
             plays, "Restart k3s to apply containerd config"
         )
@@ -911,11 +912,81 @@ def test_device_ownership_dropin_enabled_for_cdi_on_all_distros():
             "%s: restart handler must cover both k3s and k3s-agent units "
             "(server vs agent role); got loop=%r" % (relpath, loop)
         )
-        assert handler.get("failed_when") is False, (
-            "%s: restart handler must tolerate a missing unit "
-            "(failed_when: false) — only one of k3s/k3s-agent exists, and "
-            "on the full pipeline k3s is not installed when prepare runs; "
-            "got failed_when=%r" % (relpath, handler.get("failed_when"))
+        # A missing unit is skipped via a service_facts existence gate,
+        # NOT blanket-suppressed with failed_when: false — a present unit
+        # that fails to restart (malformed drop-in, k3s that won't come
+        # back) must still fail the play.
+        assert "failed_when" not in handler, (
+            "%s: restart handler must NOT use failed_when: false — it "
+            "masks a genuine k3s restart failure, not just a missing "
+            "unit; gate on ansible_facts.services instead. Got "
+            "failed_when=%r" % (relpath, handler.get("failed_when"))
+        )
+        assert "ansible_facts.services" in str(handler.get("when", "")), (
+            "%s: restart handler must restart only units present in "
+            "ansible_facts.services; got when=%r"
+            % (relpath, handler.get("when"))
+        )
+        # ansible_facts.services is not populated by default fact
+        # gathering, so a service_facts handler must refresh it on the
+        # same notify topic, and must be defined before the restart so it
+        # runs first (handlers fire in definition order).
+        refresh = _find_handler(
+            plays, "Refresh service facts before k3s restart"
+        )
+        assert "ansible.builtin.service_facts" in refresh, (
+            "%s: a service_facts handler must populate "
+            "ansible_facts.services before the restart gate; got %r"
+            % (relpath, refresh)
+        )
+        assert (
+            refresh.get("listen") == "Restart k3s to apply containerd config"
+        ), (
+            "%s: the service_facts handler must listen on the restart "
+            "topic so the same notify triggers both; got listen=%r"
+            % (relpath, refresh.get("listen"))
+        )
+
+
+def test_device_ownership_dropin_removed_when_kubevirt_disabled():
+    # The drop-in toggle must be reversible (same symmetric-cleanup shape
+    # as the DRBD drop-ins): a host that carried 10-cozystack-cri.toml
+    # from an earlier KubeVirt-enabled run, then had
+    # cozystack_enable_kubevirt set to false, must have the file removed
+    # so containerd's device_ownership_from_security_context matches the
+    # toggle. Skipping the create task alone leaves stale host state.
+    # Removal notifies the restart handler so a running cluster drops it.
+    for relpath in _PREPARE_PLAYBOOKS:
+        plays = _load_playbook(relpath)
+        task = _find_task(
+            plays, "Remove containerd CDI drop-in when KubeVirt is disabled"
+        )
+        f = task.get("ansible.builtin.file", {}) or {}
+        assert f.get("state") == "absent", (
+            "%s: cleanup task must use state=absent; got %r"
+            % (relpath, f.get("state"))
+        )
+        path = str(f.get("path", ""))
+        assert path.endswith("/10-cozystack-cri.toml"), (
+            "%s: cleanup must remove the 10-cozystack-cri.toml drop-in; "
+            "got path=%r" % (relpath, f.get("path"))
+        )
+        assert "cozystack_k3s_containerd_dropin_dir" in path, (
+            "%s: cleanup path must honor the cozystack_k3s_containerd_"
+            "dropin_dir override so it removes the same file the create "
+            "task wrote; got path=%r" % (relpath, f.get("path"))
+        )
+        when_blob = str(task.get("when", ""))
+        assert "not" in when_blob and "cozystack_enable_kubevirt" in when_blob, (
+            "%s: cleanup must run only when KubeVirt is disabled "
+            "(not cozystack_enable_kubevirt); got when=%r"
+            % (relpath, task.get("when"))
+        )
+        notify = task.get("notify")
+        notify_list = notify if isinstance(notify, list) else [notify]
+        assert "Restart k3s to apply containerd config" in notify_list, (
+            "%s: cleanup must notify the restart handler so a running "
+            "cluster drops the setting; got notify=%r" % (relpath, notify)
         )
 
 

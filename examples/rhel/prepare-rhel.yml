@@ -122,6 +122,13 @@
         state: restarted
       failed_when: false  # tolerated: same reason as the enable task below
 
+    # Refresh service facts on the same notify topic so the restart
+    # handler below sees the current unit set. Defined first, so it runs
+    # first (handlers fire in definition order, not notify order).
+    - name: Refresh service facts before k3s restart
+      ansible.builtin.service_facts:
+      listen: Restart k3s to apply containerd config
+
     - name: Restart k3s to apply containerd config
       ansible.builtin.systemd:
         name: "{{ item }}"
@@ -129,11 +136,14 @@
       loop:
         - k3s
         - k3s-agent
-      # Only the unit matching this node's role exists; the other is
-      # absent, and on the full-pipeline run prepare executes before
-      # k3s is installed (the drop-in is then read at first k3s start).
-      # failed_when: false tolerates both — a missing unit is not an error.
-      failed_when: false
+      # Restart only the unit that exists on this node: a server runs
+      # k3s, an agent runs k3s-agent, and on a full-pipeline run neither
+      # exists yet when prepare runs (the drop-in is read at first k3s
+      # start instead). service_facts keys systemd units with the
+      # .service suffix. A unit that IS present but fails to restart
+      # still fails the play — a malformed drop-in or a k3s that will not
+      # come back is surfaced, not masked by failed_when: false.
+      when: (item ~ '.service') in ansible_facts.services
 
   tasks:
     - name: Create k3s_cluster group for k3s.orchestration
@@ -234,6 +244,19 @@
           [plugins.'io.containerd.cri.v1.runtime']
             device_ownership_from_security_context = true
       when: cozystack_enable_kubevirt | default(true) | bool
+      notify: Restart k3s to apply containerd config
+
+    # Reverse the drop-in when KubeVirt is turned off: a host that
+    # carried 10-cozystack-cri.toml from an earlier enabled run would
+    # otherwise keep device_ownership_from_security_context on, so the
+    # host state no longer matches the toggle. Removal notifies the
+    # restart handler so a running cluster drops the setting too. (No-op
+    # when the file was never written — file: absent reports unchanged.)
+    - name: Remove containerd CDI drop-in when KubeVirt is disabled
+      ansible.builtin.file:
+        path: "{{ cozystack_k3s_containerd_dropin_dir | default('/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d') }}/10-cozystack-cri.toml"
+        state: absent
+      when: not (cozystack_enable_kubevirt | default(true) | bool)
       notify: Restart k3s to apply containerd config
 
     - name: Ensure multipath drop-in directory exists
