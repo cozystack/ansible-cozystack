@@ -111,7 +111,7 @@ The prepare playbooks set a `global_filter` in `/etc/lvm/lvm.conf` that rejects 
 global_filter = [ "r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|", "r|^/dev/loop.*|" ]
 ```
 
-The list is exposed as `cozystack_lvm_global_filter` (see [Example playbook variables](#example-playbook-variables)). Override it from inventory on hosts whose own physical volumes sit on device-mapper devices — LVM-on-LUKS or LVM-on-multipath, where the PVs are `/dev/dm-*` — so they are not filtered out. Dedicated storage nodes use the default unchanged.
+The list is exposed as `cozystack_lvm_global_filter` (see [Example playbook variables](#example-playbook-variables)). Override it from inventory on hosts whose own physical volumes sit on device-mapper devices — LVM-on-LUKS or LVM-on-multipath, where the PVs are `/dev/dm-*` — so they are not filtered out. Dedicated storage nodes use the default unchanged. The task replaces whatever `global_filter` is already in `lvm.conf` (commented or active), so if a host already has custom filter rules set `cozystack_lvm_global_filter` to the full list you want, not just the entries to add.
 
 #### Required: Containerd + Kubernetes kernel modules
 
