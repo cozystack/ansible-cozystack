@@ -53,10 +53,14 @@
       - _case_second is not changed
       # lvmconfig returns rc 0 only when global_filter sits inside devices {}.
       - item.effective == (_case_lvm.rc == 0)
-      # When effective, LVM must report exactly the configured list.
+      # When effective, LVM must report exactly the configured list — except
+      # the stale-duplicate case, where a pre-existing in-block filter wins the
+      # lineinfile race and the configured list must NOT match. That mismatch
+      # is exactly what the playbooks' value comparison rejects.
       - (not item.effective) or
-        ((_case_lvm.stdout | regex_replace('^global_filter=', '') | from_json | sort)
+        (((_case_lvm.stdout | regex_replace('^global_filter=', '') | from_json | sort)
         == ((item.override | default(_lvm_default_list)) | sort))
+        != (item.stale | default(false)))
     fail_msg: >-
       Case {{ item.name }}: expected effective={{ item.effective }}, got
       rc={{ _case_lvm.rc }} stdout='{{ _case_lvm.stdout }}'.

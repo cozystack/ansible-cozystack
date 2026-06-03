@@ -19,20 +19,19 @@
       - "r|^/dev/dm-.*|"
       - "r|^/dev/zd.*|"
       - "r|^/dev/loop.*|"
+    # Mirrors the set_fact of the same name in the prepare playbooks; the
+    # templated line below references it exactly as the playbooks do.
+    _cozystack_lvm_default_filter: "{{ _lvm_default_list }}"
     # Expected rendered line for the shipped default (to_json output).
     _lvm_expected_default_line: '        global_filter = ["r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|", "r|^/dev/loop.*|"]'
     # The exact templated value from the prepare playbooks. Re-rendered on
     # every use, so a task-level cozystack_lvm_global_filter override is
     # picked up automatically.
-    _lvm_filter_line: '        global_filter = {{ cozystack_lvm_global_filter |
-      default(["r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|",
-      "r|^/dev/loop.*|"]) | to_json }}'
+    _lvm_filter_line: '        global_filter = {{ cozystack_lvm_global_filter | default(_cozystack_lvm_default_filter) | to_json }}'
     # Same template as a raw (un-rendered) literal — strings parsed out of a
     # playbook with from_yaml are NOT re-templated, so the drift guard compares
     # the playbooks' `line` against this raw form, not the rendered one.
-    _lvm_raw_line: '{% raw %}        global_filter = {{ cozystack_lvm_global_filter |
-      default(["r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|",
-      "r|^/dev/loop.*|"]) | to_json }}{% endraw %}'
+    _lvm_raw_line: '{% raw %}        global_filter = {{ cozystack_lvm_global_filter | default(_cozystack_lvm_default_filter) | to_json }}{% endraw %}'
     _lvm_task_name: Exclude virtual and loop devices from host LVM scanning
     _lvm_prepare_playbooks:
       - "{{ playbook_dir }}/../examples/rhel/prepare-rhel.yml"
@@ -96,6 +95,20 @@
           global {
               umask = 63
           }
+      # A stale global_filter already lives inside devices {} and a second
+      # match sits after the block. lineinfile replaces the LAST match (the
+      # one outside), so the stale in-block value keeps winning. lvmconfig
+      # returns rc 0 but reports the stale list, not ours — the playbooks'
+      # value comparison rejects exactly this.
+      - name: stale_duplicate
+        effective: true
+        stale: true
+        content: |
+          devices {
+              dir = "/dev"
+              global_filter = [ "r|^/dev/sda.*|" ]
+          }
+          # global_filter = [ "a|.*/|" ]
   tasks:
     - name: Render the shipped default and assert valid LVM global_filter syntax
       ansible.builtin.assert:
