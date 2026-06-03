@@ -293,6 +293,28 @@
           default(["r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|",
           "r|^/dev/loop.*|"]) | to_json }}'
 
+    # Confirm LVM honours the filter. `lvmconfig devices/global_filter`
+    # reports the setting only when it sits inside the devices {} block, so a
+    # filter that landed elsewhere (an lvm.conf with no devices section) is
+    # caught here instead of silently leaving the host LVM unfiltered.
+    - name: Read back the effective host LVM global_filter
+      ansible.builtin.command:
+        cmd: lvmconfig devices/global_filter
+      register: _cozystack_lvm_filter_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if the host LVM does not honour the configured global_filter
+      ansible.builtin.assert:
+        that:
+          - _cozystack_lvm_filter_check.rc == 0
+        fail_msg: >-
+          LVM does not report devices/global_filter as active
+          (rc={{ _cozystack_lvm_filter_check.rc }}); the setting likely landed
+          outside the devices {} block. Ensure /etc/lvm/lvm.conf contains a
+          'devices {' section.
+        success_msg: Host LVM global_filter is active.
+
     - name: Configure sysctl parameters
       ansible.posix.sysctl:
         name: "{{ item.name }}"
