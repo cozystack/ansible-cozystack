@@ -36,7 +36,10 @@ Bugfixes
   Permission denied``, the ``DataVolume`` hung in ``ImportInProgress``,
   and VMs referencing the disk stayed ``Pending``. Gated behind
   ``cozystack_enable_kubevirt``; drop-in directory overridable via
-  ``cozystack_k3s_containerd_dropin_dir`` for containerd 1.x clusters.
+  ``cozystack_k3s_containerd_dropin_dir`` (relocates the file only — the
+  content is hardcoded for containerd 2.x / config version 3 as shipped
+  by current k3s; a containerd 1.x cluster needs a hand-written
+  ``config.toml.d`` drop-in instead).
   Setting ``cozystack_enable_kubevirt`` to ``false`` removes a
   previously written drop-in so the host state matches the toggle, and
   the restart handler only restarts a k3s unit that is actually present

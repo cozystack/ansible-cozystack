@@ -886,8 +886,9 @@ def test_device_ownership_dropin_enabled_for_cdi_on_all_distros():
         )
         assert "cozystack_k3s_containerd_dropin_dir" in str(f.get("path", "")), (
             "%s: drop-in dir path must be overridable via "
-            "cozystack_k3s_containerd_dropin_dir (for containerd 1.x); "
-            "got path=%r" % (relpath, f.get("path"))
+            "cozystack_k3s_containerd_dropin_dir (relocates the file, "
+            "e.g. a non-default k3s data-dir); got path=%r"
+            % (relpath, f.get("path"))
         )
         assert "cozystack_enable_kubevirt" in str(mkdir.get("when", "")), (
             "%s: drop-in dir task must share the KubeVirt gate; got when=%r"

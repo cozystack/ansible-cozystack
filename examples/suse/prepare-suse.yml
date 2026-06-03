@@ -220,8 +220,12 @@
     # k3s start (full pipeline) or applied by the handler on re-runs
     # against a running cluster. config-v3.toml.d and
     # io.containerd.cri.v1.runtime are the containerd 2.x (config
-    # version 3) paths shipped by current k3s; override
-    # cozystack_k3s_containerd_dropin_dir for a containerd 1.x cluster.
+    # version 3) paths shipped by current k3s, and the content is
+    # hardcoded for that schema. cozystack_k3s_containerd_dropin_dir
+    # only relocates the file (e.g. a non-default k3s data-dir); it does
+    # not rewrite the content, so a containerd 1.x cluster needs a
+    # hand-written config.toml.d drop-in (version = 2,
+    # io.containerd.grpc.v1.cri) instead.
     - name: Ensure k3s containerd config drop-in directory exists
       ansible.builtin.file:
         path: "{{ cozystack_k3s_containerd_dropin_dir | default('/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d') }}"
