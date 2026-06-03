@@ -23,7 +23,9 @@ Unreleased
   ``/dev/zd*`` and ``/dev/loop*`` so the host LVM does not scan or
   activate volume groups backed by LINSTOR/DRBD volumes or located
   inside loop-mounted images. Mirrors the global_filter shipped in the
-  Talos machine config.
+  Talos machine config. The filter is overridable from inventory via
+  ``cozystack_lvm_global_filter`` for hosts whose own PVs sit on
+  device-mapper devices (LVM-on-LUKS, multipath).
 
 Unreleased
 ==========

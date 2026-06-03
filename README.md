@@ -101,6 +101,18 @@ blacklist {
 }
 ```
 
+#### Required: Host LVM global_filter
+
+> **Silent failure if omitted.** Without a `global_filter` the host's LVM can scan and auto-activate volume groups that live on DRBD/LINSTOR volumes, ZFS zvols, device-mapper targets, or loop-mounted images. Once the host activates a VG backed by a LINSTOR volume the Piraeus satellite can no longer manage it, and stacked volumes become unavailable after the next reboot.
+
+The prepare playbooks set a `global_filter` in `/etc/lvm/lvm.conf` that rejects virtual and loop devices, mirroring the filter shipped in the Talos machine config:
+
+```text
+global_filter = [ "r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|", "r|^/dev/loop.*|" ]
+```
+
+The list is exposed as `cozystack_lvm_global_filter` (see [Example playbook variables](#example-playbook-variables)). Override it from inventory on hosts whose own physical volumes sit on device-mapper devices — LVM-on-LUKS or LVM-on-multipath, where the PVs are `/dev/dm-*` — so they are not filtered out. Dedicated storage nodes use the default unchanged.
+
 #### Required: Containerd + Kubernetes kernel modules
 
 Required for containerd's overlay storage driver and standard Kubernetes bridge networking. Loaded via `/etc/modules-load.d/cozystack.conf`:
@@ -362,6 +374,7 @@ These variables are consumed only by the example prepare playbooks in `examples/
 | `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules **and** install the containerd `device_ownership_from_security_context` drop-in for CDI block imports. Set `false` to skip both. |
 | `cozystack_k3s_containerd_dropin_dir` | `/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d` | Example playbooks: directory for the containerd CRI drop-in (gated on `cozystack_enable_kubevirt`). Only relocates the file — the drop-in content is hardcoded for containerd 2.x (config v3); a containerd 1.x cluster needs a hand-written `config.toml.d` drop-in instead. |
 | `cozystack_flush_iptables` | `false` | Example playbooks: flush the iptables INPUT chain before k3s installs. Set `true` on Ubuntu/Debian cloud images (OCI/AWS/GCP) where the default INPUT chain ends with `REJECT icmp-host-prohibited` and blocks k3s inter-node ports 2380/6443. |
+| `cozystack_lvm_global_filter` | `["r\|^/dev/drbd.*\|", "r\|^/dev/dm-.*\|", "r\|^/dev/zd.*\|", "r\|^/dev/loop.*\|"]` | Example playbooks: LVM `global_filter` written into `/etc/lvm/lvm.conf` so the host does not scan or activate volume groups backed by DRBD/LINSTOR volumes, ZFS zvols, device-mapper targets, or loop images. Override on hosts whose own PVs live on device-mapper devices (LVM-on-LUKS, multipath) — e.g. drop the `r\|^/dev/dm-.*\|` entry. |
 | `cozystack_zfs_release_rpm_extra` | `{}` | `examples/rhel/` only: merged on top of the built-in `cozystack_zfs_release_rpm_by_major` dict, so you can add (or override) a single EL-major → OpenZFS release RPM entry from inventory without wiping the base dict. Example: `{"10": "https://zfsonlinux.org/epel/zfs-release-X-Y.el10.noarch.rpm"}` once upstream ships one. |
 | `cozystack_enable_drbd_dkms` | `true` | `examples/ubuntu/` only: install `drbd-dkms` from the LINBIT PPA on Ubuntu LTS 22.04 / 24.04 hosts so DRBD's kernel module is signed via dkms+shim under Secure Boot. Set `false` on Talos hosts (Talos ships pre-signed DRBD modules in extensions) or where Secure Boot is disabled and the in-cluster compile path is preferred. The toggle stops *future* installs but does NOT undo a prior install — manually `apt purge drbd-dkms` and remove the LINBIT entry from `/etc/apt/sources.list.d/` if you flipped to `false` after a successful run. |
 | `cozystack_drbd_ppa` | `ppa:linbit/linbit-drbd9-stack` | `examples/ubuntu/` only: override to point at a Launchpad PPA mirror of the LINBIT archive. `ansible.builtin.apt_repository` resolves the signing key for `ppa:` URIs by querying Launchpad's REST API directly (no extra packages required). Non-Launchpad URIs (`deb http://internal-mirror/...`) work but you must manage the apt signing key separately — drop a keyring under `/etc/apt/keyrings/` and add `signed-by=` to the repo line. |
