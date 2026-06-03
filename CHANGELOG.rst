@@ -26,7 +26,10 @@ Unreleased
   inside loop-mounted images. Mirrors the global_filter shipped in the
   Talos machine config. The filter is overridable from inventory via
   ``cozystack_lvm_global_filter`` for hosts whose own PVs sit on
-  device-mapper devices (LVM-on-LUKS, multipath).
+  device-mapper devices (LVM-on-LUKS, multipath). After writing it the
+  playbook verifies the filter with ``lvmconfig`` and fails loudly if it
+  did not take effect (for example on an ``lvm.conf`` with no ``devices``
+  section), instead of leaving the host silently unfiltered.
 - Prepare playbooks now enable
   ``device_ownership_from_security_context`` on the containerd CRI
   plugin (k3s drop-in
