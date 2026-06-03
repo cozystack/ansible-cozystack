@@ -3,6 +3,7 @@ cozystack.installer Release Notes
 =================================
 
 Unreleased
+==========
 
 - CI: new ``hack/check-versions.sh`` invariant check runs in the ``Lint``
   job and fails the build if version strings drift across the three
@@ -18,13 +19,17 @@ Unreleased
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
   balancer (cloud VMs, bare metal).
-
-Unreleased
-==========
-
-Bugfixes
---------
-
+- Prepare playbooks now set an LVM ``global_filter`` in
+  ``/etc/lvm/lvm.conf`` excluding ``/dev/drbd*``, ``/dev/dm-*``,
+  ``/dev/zd*`` and ``/dev/loop*`` so the host LVM does not scan or
+  activate volume groups backed by LINSTOR/DRBD volumes or located
+  inside loop-mounted images. Mirrors the global_filter shipped in the
+  Talos machine config. The filter is overridable from inventory via
+  ``cozystack_lvm_global_filter`` for hosts whose own PVs sit on
+  device-mapper devices (LVM-on-LUKS, multipath). After writing it the
+  playbook verifies the filter with ``lvmconfig`` and fails loudly if it
+  did not take effect (for example on an ``lvm.conf`` with no ``devices``
+  section), instead of leaving the host silently unfiltered.
 - Prepare playbooks now enable
   ``device_ownership_from_security_context`` on the containerd CRI
   plugin (k3s drop-in
