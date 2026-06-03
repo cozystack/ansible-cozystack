@@ -793,3 +793,339 @@ def test_claude_md_dkms_exception_documented():
         "CLAUDE.md must document the drbd-dkms exception (Secure Boot "
         "hosts) so the 'do NOT install' rule is no longer absolute."
     )
+
+
+# containerd device_ownership_from_security_context drop-in (CDI block
+# imports) — cross-distro invariant on BOTH the task and the handler.
+
+
+_PREPARE_PLAYBOOKS = (
+    "examples/ubuntu/prepare-ubuntu.yml",
+    "examples/rhel/prepare-rhel.yml",
+    "examples/suse/prepare-suse.yml",
+)
+
+
+def _find_handler(plays, name):
+    for play in plays:
+        for handler in play.get("handlers", []) or []:
+            if handler.get("name") == name:
+                return handler
+    raise AssertionError(
+        "handler %r not found in %r"
+        % (name, [p.get("name") for p in plays])
+    )
+
+
+def test_device_ownership_dropin_enabled_for_cdi_on_all_distros():
+    # KubeVirt's CDI importer is a non-root pod that streams VM disk
+    # images into raw block volumes; containerd only chowns the block
+    # device to the pod's SecurityContext when
+    # device_ownership_from_security_context is true on the CRI plugin,
+    # and k3s ships it disabled. Without it the importer dies with
+    # "Permission denied", the DataVolume hangs in ImportInProgress, and
+    # every VM referencing the disk stays Pending. The prepare playbooks
+    # drop in a CRI config that enables it. Pin the drop-in, its KubeVirt
+    # gate, and the restart handler across all three distros so the
+    # mechanism cannot silently regress or drift.
+    for relpath in _PREPARE_PLAYBOOKS:
+        plays = _load_playbook(relpath)
+
+        drop = _find_task(
+            plays,
+            "Enable device_ownership_from_security_context for CDI block imports",
+        )
+        copy = drop.get("ansible.builtin.copy", {}) or {}
+        dest = copy.get("dest", "")
+        assert dest.endswith("/10-cozystack-cri.toml"), (
+            "%s: drop-in must be written to a 10-cozystack-cri.toml file "
+            "under the containerd config-dir glob; got dest=%r"
+            % (relpath, dest)
+        )
+        content = copy.get("content", "")
+        assert "device_ownership_from_security_context = true" in content, (
+            "%s: drop-in content must set "
+            "device_ownership_from_security_context = true; got %r"
+            % (relpath, content)
+        )
+        # The containerd 2.x (config v3) CRI runtime table is the path
+        # shipped by the pinned k3s. Pin it so a regression to the v2
+        # io.containerd.grpc.v1.cri table (which current k3s ignores) is
+        # caught.
+        assert "io.containerd.cri.v1.runtime" in content, (
+            "%s: drop-in must target the containerd v3 CRI runtime table "
+            "io.containerd.cri.v1.runtime; got %r" % (relpath, content)
+        )
+
+        # Gated on the KubeVirt toggle — no virt, no drop-in.
+        assert "cozystack_enable_kubevirt" in str(drop.get("when", "")), (
+            "%s: drop-in task must gate on cozystack_enable_kubevirt so "
+            "non-virt clusters skip it; got when=%r"
+            % (relpath, drop.get("when"))
+        )
+
+        # Must notify the restart handler so a re-run against a running
+        # cluster actually applies the change (the drop-in alone is only
+        # read at containerd start otherwise).
+        notify = drop.get("notify")
+        notify_list = notify if isinstance(notify, list) else [notify]
+        assert "Restart k3s to apply containerd config" in notify_list, (
+            "%s: drop-in task must notify 'Restart k3s to apply containerd "
+            "config' so the setting takes effect on a running cluster; "
+            "got notify=%r" % (relpath, notify)
+        )
+
+        # The drop-in directory task shares the dest dir and the gate.
+        mkdir = _find_task(
+            plays, "Ensure k3s containerd config drop-in directory exists"
+        )
+        f = mkdir.get("ansible.builtin.file", {}) or {}
+        assert f.get("state") == "directory", (
+            "%s: drop-in dir task must create a directory; got state=%r"
+            % (relpath, f.get("state"))
+        )
+        assert "cozystack_k3s_containerd_dropin_dir" in str(f.get("path", "")), (
+            "%s: drop-in dir path must be overridable via "
+            "cozystack_k3s_containerd_dropin_dir (relocates the file, "
+            "e.g. a non-default k3s data-dir); got path=%r"
+            % (relpath, f.get("path"))
+        )
+        assert "cozystack_enable_kubevirt" in str(mkdir.get("when", "")), (
+            "%s: drop-in dir task must share the KubeVirt gate; got when=%r"
+            % (relpath, mkdir.get("when"))
+        )
+
+        # The restart handler applies the drop-in on running clusters and
+        # must tolerate a missing unit: only the server OR agent unit
+        # exists on a node, and on the full pipeline k3s is not installed
+        # yet when prepare runs. It must do so WITHOUT masking a genuine
+        # restart failure of a unit that IS present.
+        handler = _find_handler(
+            plays, "Restart k3s to apply containerd config"
+        )
+        systemd = handler.get("ansible.builtin.systemd", {}) or {}
+        assert systemd.get("state") == "restarted", (
+            "%s: restart handler must restart the unit; got state=%r"
+            % (relpath, systemd.get("state"))
+        )
+        loop = handler.get("loop") or []
+        assert "k3s" in loop and "k3s-agent" in loop, (
+            "%s: restart handler must cover both k3s and k3s-agent units "
+            "(server vs agent role); got loop=%r" % (relpath, loop)
+        )
+        # A missing unit is skipped via a service_facts existence gate,
+        # NOT blanket-suppressed with failed_when: false — a present unit
+        # that fails to restart (malformed drop-in, k3s that won't come
+        # back) must still fail the play.
+        assert "failed_when" not in handler, (
+            "%s: restart handler must NOT use failed_when: false — it "
+            "masks a genuine k3s restart failure, not just a missing "
+            "unit; gate on ansible_facts.services instead. Got "
+            "failed_when=%r" % (relpath, handler.get("failed_when"))
+        )
+        assert "ansible_facts.services" in str(handler.get("when", "")), (
+            "%s: restart handler must restart only units present in "
+            "ansible_facts.services; got when=%r"
+            % (relpath, handler.get("when"))
+        )
+        # ansible_facts.services is not populated by default fact
+        # gathering, so a service_facts handler must refresh it on the
+        # same notify topic, and must be defined before the restart so it
+        # runs first (handlers fire in definition order).
+        refresh = _find_handler(
+            plays, "Refresh service facts before k3s restart"
+        )
+        assert "ansible.builtin.service_facts" in refresh, (
+            "%s: a service_facts handler must populate "
+            "ansible_facts.services before the restart gate; got %r"
+            % (relpath, refresh)
+        )
+        assert (
+            refresh.get("listen") == "Restart k3s to apply containerd config"
+        ), (
+            "%s: the service_facts handler must listen on the restart "
+            "topic so the same notify triggers both; got listen=%r"
+            % (relpath, refresh.get("listen"))
+        )
+
+
+def test_device_ownership_dropin_removed_when_kubevirt_disabled():
+    # The drop-in toggle must be reversible (same symmetric-cleanup shape
+    # as the DRBD drop-ins): a host that carried 10-cozystack-cri.toml
+    # from an earlier KubeVirt-enabled run, then had
+    # cozystack_enable_kubevirt set to false, must have the file removed
+    # so containerd's device_ownership_from_security_context matches the
+    # toggle. Skipping the create task alone leaves stale host state.
+    # Removal notifies the restart handler so a running cluster drops it.
+    for relpath in _PREPARE_PLAYBOOKS:
+        plays = _load_playbook(relpath)
+        task = _find_task(
+            plays, "Remove containerd CDI drop-in when KubeVirt is disabled"
+        )
+        f = task.get("ansible.builtin.file", {}) or {}
+        assert f.get("state") == "absent", (
+            "%s: cleanup task must use state=absent; got %r"
+            % (relpath, f.get("state"))
+        )
+        path = str(f.get("path", ""))
+        assert path.endswith("/10-cozystack-cri.toml"), (
+            "%s: cleanup must remove the 10-cozystack-cri.toml drop-in; "
+            "got path=%r" % (relpath, f.get("path"))
+        )
+        assert "cozystack_k3s_containerd_dropin_dir" in path, (
+            "%s: cleanup path must honor the cozystack_k3s_containerd_"
+            "dropin_dir override so it removes the same file the create "
+            "task wrote; got path=%r" % (relpath, f.get("path"))
+        )
+        when_blob = str(task.get("when", ""))
+        assert "not" in when_blob and "cozystack_enable_kubevirt" in when_blob, (
+            "%s: cleanup must run only when KubeVirt is disabled "
+            "(not cozystack_enable_kubevirt); got when=%r"
+            % (relpath, task.get("when"))
+        )
+        notify = task.get("notify")
+        notify_list = notify if isinstance(notify, list) else [notify]
+        assert "Restart k3s to apply containerd config" in notify_list, (
+            "%s: cleanup must notify the restart handler so a running "
+            "cluster drops the setting; got notify=%r" % (relpath, notify)
+        )
+
+
+def test_readme_documents_dropin_rationale_and_restart():
+    # Two things a maintainer/operator must learn from the README section
+    # describing the drop-in, pinned against doc drift:
+    #   1. k3s has a native --nonroot-devices flag that sets the same
+    #      option; the section must acknowledge it and say why the drop-in
+    #      is used instead (uniform server+agent coverage, applies to a
+    #      running cluster) — otherwise a future maintainer rediscovers the
+    #      flag and assumes the drop-in was chosen out of ignorance.
+    #   2. the restart handler bounces k3s on a live re-run, which is
+    #      disruptive — operators must be warned to run it in a window.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    marker = "#### Enabled by default: containerd device ownership for CDI"
+    assert marker in readme, (
+        "README must keep the '%s...' anchor so this test can scope to it"
+        % marker
+    )
+    start = readme.index(marker)
+    rest = readme[start + len(marker):]
+    nxt = rest.find("\n#### ")
+    nxt_h3 = rest.find("\n### ")
+    candidates = [i for i in (nxt, nxt_h3) if i != -1]
+    end = start + len(marker) + (min(candidates) if candidates else len(rest))
+    section = readme[start:end]
+
+    assert "--nonroot-devices" in section, (
+        "README drop-in section must mention the native k3s "
+        "--nonroot-devices flag as the alternative, and why the drop-in "
+        "is used instead, so the design choice is documented. Section: %r"
+        % section
+    )
+    lowered = section.lower()
+    assert "restart" in lowered and (
+        "maintenance window" in lowered or "mid-day" in lowered
+    ), (
+        "README drop-in section must warn that a re-run against a live "
+        "cluster restarts k3s and should be done in a maintenance window. "
+        "Section: %r" % section
+    )
+
+    # The containerd-1.x guidance must be accurate: the drop-in content is
+    # hardcoded v3 and cozystack_k3s_containerd_dropin_dir only relocates
+    # the file, so 1.x operators must write their own drop-in. The README
+    # must not imply a one-variable 1.x path the code cannot honor.
+    assert "write your own" in lowered, (
+        "README drop-in section must tell containerd-1.x operators to "
+        "write their own drop-in — the v3 content is hardcoded and the "
+        "directory variable does not rewrite it. Section: %r" % section
+    )
+    assert "only relocates" in lowered or "does not rewrite" in lowered, (
+        "README must state that cozystack_k3s_containerd_dropin_dir only "
+        "relocates the file and does not change its (v3) content, so the "
+        "containerd-1.x instruction is not misleading. Section: %r"
+        % section
+    )
+
+
+def test_claude_md_documents_cdi_device_ownership_trap():
+    # This change adds a fourth silent-failure trap of the same class as
+    # the ones CLAUDE.md already enumerates (multipath DRBD blacklist,
+    # vhost_net, br_netfilter). The canonical "Critical silent-failure
+    # traps" list must include the containerd device-ownership trap so
+    # the project guidance does not go stale and a future contributor
+    # does not reintroduce the gap. Mirrors
+    # test_claude_md_dkms_exception_documented.
+    claude_path = os.path.join(REPO_ROOT, "CLAUDE.md")
+    if not os.path.exists(claude_path):
+        return  # CLAUDE.md is optional; skip silently if absent
+    with open(claude_path, "r", encoding="utf-8") as fh:
+        claude = fh.read()
+    assert "device_ownership_from_security_context" in claude, (
+        "CLAUDE.md must list the containerd "
+        "device_ownership_from_security_context trap alongside the "
+        "multipath/vhost_net/br_netfilter traps so the CDI block-import "
+        "failure mode is part of the canonical silent-failure list."
+    )
+    # The entry must be actionable — name the symptom so a reader can
+    # match it to what they observe.
+    assert "ImportInProgress" in claude or "cdi-block-volume" in claude, (
+        "CLAUDE.md device-ownership trap entry must name the observable "
+        "symptom (CDI importer Permission denied / DataVolume "
+        "ImportInProgress) so it is actionable, not just a flag name."
+    )
+
+
+def test_readme_variables_table_documents_containerd_dropin():
+    # The "Example playbook variables" table is the canonical reference
+    # operators consult. Two things must be true after this change:
+    #   1. the new cozystack_k3s_containerd_dropin_dir tunable appears in
+    #      the table (every other examples/* tunable does), and
+    #   2. the cozystack_enable_kubevirt row reflects that the toggle now
+    #      ALSO gates the containerd device-ownership drop-in, not just
+    #      the kernel modules — otherwise an operator flipping it to false
+    #      won't realise they also disable the CDI block-import fix.
+    readme_path = os.path.join(REPO_ROOT, "README.md")
+    with open(readme_path, "r", encoding="utf-8") as fh:
+        readme = fh.read()
+    marker = "### Example playbook variables"
+    assert marker in readme, (
+        "README must keep the '%s' anchor so this test can scope to it"
+        % marker
+    )
+    section_start = readme.index(marker)
+    rest = readme[section_start + len(marker):]
+    next_h2 = rest.find("\n## ")
+    next_h3 = rest.find("\n### ")
+    candidates = [i for i in (next_h2, next_h3) if i != -1]
+    section_end = section_start + len(marker) + (
+        min(candidates) if candidates else len(rest)
+    )
+    section = readme[section_start:section_end]
+
+    assert "cozystack_k3s_containerd_dropin_dir" in section, (
+        "cozystack_k3s_containerd_dropin_dir must appear in the Example "
+        "playbook variables table — it is an overridable examples/* "
+        "tunable, and the table is where operators look for one."
+    )
+
+    # The kubevirt row specifically must mention the drop-in, so the
+    # expanded meaning of the toggle is visible at the row a reader scans.
+    kubevirt_rows = [
+        line for line in section.splitlines()
+        if "`cozystack_enable_kubevirt`" in line
+    ]
+    assert kubevirt_rows, (
+        "Example playbook variables table must have a "
+        "cozystack_enable_kubevirt row"
+    )
+    assert any(
+        "device_ownership" in row or "drop-in" in row or "CDI" in row
+        for row in kubevirt_rows
+    ), (
+        "the cozystack_enable_kubevirt row must note it also gates the "
+        "containerd device-ownership drop-in (CDI block imports), so "
+        "disabling KubeVirt prep is understood to disable that fix too. "
+        "Got rows: %r" % kubevirt_rows
+    )

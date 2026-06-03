@@ -144,3 +144,4 @@ The host only needs the kernel modules and, for KVM, a working `/dev/kvm`.
 - **`br_netfilter` missing**: `net.bridge.bridge-nf-call-*` sysctls fail
   with "No such file or directory". Load the module before applying the
   sysctl.
+- **containerd `device_ownership_from_security_context` disabled**: k3s ships it off; without the `config-v3.toml.d/10-cozystack-cri.toml` drop-in, KubeVirt's non-root CDI importer cannot open a raw block volume (`blockdev: cannot open /dev/cdi-block-volume: Permission denied`), the DataVolume hangs in `ImportInProgress`, and VMs that reference the disk stay Pending. Apply when KubeVirt is enabled (gated on `cozystack_enable_kubevirt`).

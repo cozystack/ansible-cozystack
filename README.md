@@ -12,9 +12,7 @@ Supported targets:
 
 Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.
 
-Deploys the Cozystack operator and Platform Package using the
-`kubernetes.core.helm` module with automatic Helm and helm-diff
-installation.
+Deploys the Cozystack operator and Platform Package using the `kubernetes.core.helm` module with automatic Helm and helm-diff installation.
 
 ## Prerequisites
 
@@ -30,9 +28,7 @@ ansible-galaxy collection install --requirements-file requirements.yml
 
 - SSH access to the target nodes
 
-The role automatically installs Helm and the
-[helm-diff](https://github.com/databus23/helm-diff) plugin
-on the control-plane node. No manual Helm installation is needed.
+The role automatically installs Helm and the [helm-diff](https://github.com/databus23/helm-diff) plugin on the control-plane node. No manual Helm installation is needed.
 
 ### Node Prerequisites
 
@@ -168,11 +164,25 @@ tun
 kvm_intel  # or kvm_amd depending on the CPU
 ```
 
+#### Enabled by default: containerd device ownership for CDI block imports
+
+When KubeVirt is enabled, the prepare playbook drops a containerd CRI config that sets `device_ownership_from_security_context = true`. KubeVirt's CDI (Containerized Data Importer) writes VM disk images into raw **block** volumes from a non-root importer pod; containerd only chowns the block device to the pod's `SecurityContext` UID/GID when this option is on, and k3s ships it disabled. Without it the importer fails with `blockdev: cannot open /dev/cdi-block-volume: Permission denied`, the `DataVolume` is stuck in `ImportInProgress`, and every VM that references the disk stays `Pending` — one of the silent "VMs stuck in Pending" failure modes called out above.
+
+Written as a drop-in that containerd merges on top of k3s's generated `config.toml`:
+
+```text
+/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/10-cozystack-cri.toml
+```
+
+`config-v3.toml.d` and the `io.containerd.cri.v1.runtime` plugin table are the containerd 2.x (config version 3) paths shipped by current k3s (the example inventories pin `k3s_version: v1.36.1+k3s1`), and the drop-in content is hardcoded for that — `version = 3` and the v3 table. `cozystack_k3s_containerd_dropin_dir` only relocates the file; it does not rewrite the content. So on a containerd 1.x cluster (older k3s) this drop-in does not apply as-is — write your own under `config.toml.d/` with `version = 2` and the `io.containerd.grpc.v1.cri` table. The drop-in is read at first k3s start in the full pipeline; on a re-run against a running cluster a handler restarts k3s so the change takes effect.
+
+k3s also exposes a native `--nonroot-devices` flag (valid on both server and agent) that sets the same containerd option. This collection uses the config drop-in instead because it applies uniformly to every node in the `cluster` group — including agent/worker nodes, for which the example playbooks do not wire `extra_agent_args` — and because it can be applied to an already-running cluster, which an install-time k3s flag cannot.
+
+The restart handler only fires when the drop-in is first created or its content changes; idempotent re-runs leave k3s untouched. When it does fire, `systemctl restart k3s` (or `k3s-agent`) briefly disrupts the control plane and the node's workloads on that host, so apply such a change in a maintenance window rather than casually mid-day.
+
 #### Known limitations
 
-ZFS support depends on the OS ecosystem and kernel flavor. The prepare
-playbooks skip ZFS automation gracefully in these cases and emit an
-informational notice:
+ZFS support depends on the OS ecosystem and kernel flavor. The prepare playbooks skip ZFS automation gracefully in these cases and emit an informational notice:
 
 | OS / kernel | ZFS automation | Reason |
 | --- | --- | --- |
@@ -213,9 +223,7 @@ Enable and start:
 
 #### iptables (cloud providers)
 
-Cloud providers (OCI, AWS, GCP) may ship images with restrictive iptables
-INPUT rules that block inter-node Kubernetes traffic (API 6443, kubelet 10250,
-etcd 2379-2380) even when security groups allow it.
+Cloud providers (OCI, AWS, GCP) may ship images with restrictive iptables INPUT rules that block inter-node Kubernetes traffic (API 6443, kubelet 10250, etcd 2379-2380) even when security groups allow it.
 
 Fix: flush the INPUT chain and set policy to ACCEPT before deploying k3s.
 
@@ -249,11 +257,7 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 ```
 
-These CIDRs are the k3s defaults. The example prepare playbooks
-(e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the
-`server_config_yaml` variable used by `k3s.orchestration`. The role
-variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match —
-they default to the same values.
+These CIDRs are the k3s defaults. The example prepare playbooks (e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the `server_config_yaml` variable used by `k3s.orchestration`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
 
 ## Installation
 
@@ -273,8 +277,7 @@ collections:
 
 ## Quick start
 
-1. Create your environment (pick your distro — see `examples/ubuntu/`,
-   `examples/rhel/`, or `examples/suse/`):
+1. Create your environment (pick your distro — see `examples/ubuntu/`, `examples/rhel/`, or `examples/suse/`):
 
 ```text
 my-env/
@@ -314,9 +317,7 @@ Both stages are handled automatically by the `cozystack` role.
 
 ## Role: cozystack.installer.cozystack
 
-Installs Cozystack via the official `cozy-installer` Helm chart using
-the `kubernetes.core.helm` module with automatic Helm and helm-diff
-installation.
+Installs Cozystack via the official `cozy-installer` Helm chart using the `kubernetes.core.helm` module with automatic Helm and helm-diff installation.
 
 Runs on `server[0]` only.
 
@@ -353,14 +354,13 @@ Runs on `server[0]` only.
 
 ### Example playbook variables
 
-These variables are consumed only by the example prepare playbooks in
-`examples/*/`, not by the role itself. Set them as inventory host/group
-vars to opt out of the corresponding prepare step:
+These variables are consumed only by the example prepare playbooks in `examples/*/`, not by the role itself. Set them as inventory host/group vars to opt out of the corresponding prepare step:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_enable_zfs` | `true` | Example playbooks: install ZFS userspace and load the module. Set `false` to skip. |
-| `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules. Set `false` to skip. |
+| `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules **and** install the containerd `device_ownership_from_security_context` drop-in for CDI block imports. Set `false` to skip both. |
+| `cozystack_k3s_containerd_dropin_dir` | `/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d` | Example playbooks: directory for the containerd CRI drop-in (gated on `cozystack_enable_kubevirt`). Only relocates the file — the drop-in content is hardcoded for containerd 2.x (config v3); a containerd 1.x cluster needs a hand-written `config.toml.d` drop-in instead. |
 | `cozystack_flush_iptables` | `false` | Example playbooks: flush the iptables INPUT chain before k3s installs. Set `true` on Ubuntu/Debian cloud images (OCI/AWS/GCP) where the default INPUT chain ends with `REJECT icmp-host-prohibited` and blocks k3s inter-node ports 2380/6443. |
 | `cozystack_zfs_release_rpm_extra` | `{}` | `examples/rhel/` only: merged on top of the built-in `cozystack_zfs_release_rpm_by_major` dict, so you can add (or override) a single EL-major → OpenZFS release RPM entry from inventory without wiping the base dict. Example: `{"10": "https://zfsonlinux.org/epel/zfs-release-X-Y.el10.noarch.rpm"}` once upstream ships one. |
 | `cozystack_enable_drbd_dkms` | `true` | `examples/ubuntu/` only: install `drbd-dkms` from the LINBIT PPA on Ubuntu LTS 22.04 / 24.04 hosts so DRBD's kernel module is signed via dkms+shim under Secure Boot. Set `false` on Talos hosts (Talos ships pre-signed DRBD modules in extensions) or where Secure Boot is disabled and the in-cluster compile path is preferred. The toggle stops *future* installs but does NOT undo a prior install — manually `apt purge drbd-dkms` and remove the LINBIT entry from `/etc/apt/sources.list.d/` if you flipped to `false` after a successful run. |
@@ -371,8 +371,7 @@ vars to opt out of the corresponding prepare step:
 
 This collection is designed to work alongside [k3s.orchestration](https://github.com/k3s-io/k3s-ansible). The inventory structure (groups: `cluster`, `server`, `agent`) is fully compatible.
 
-Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`,
-or `examples/suse/`:
+Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`, or `examples/suse/`:
 
 ```yaml
 - name: Prepare nodes
@@ -393,12 +392,9 @@ On cloud providers with NAT (OCI, AWS, GCP), nodes have internal IPs different f
 
 ### Multi-master setup (kube-ovn RAFT)
 
-Kube-ovn requires `MASTER_NODES` — a comma-separated list of all
-control-plane node IPs for OVN RAFT consensus. By default, the role
-auto-detects these IPs from the `server` inventory group host keys.
+Kube-ovn requires `MASTER_NODES` — a comma-separated list of all control-plane node IPs for OVN RAFT consensus. By default, the role auto-detects these IPs from the `server` inventory group host keys.
 
-This works when host keys are internal IPs (the recommended inventory
-pattern):
+This works when host keys are internal IPs (the recommended inventory pattern):
 
 ```yaml
 server:
@@ -409,8 +405,7 @@ server:
       ansible_host: 203.0.113.11
 ```
 
-If your inventory uses hostnames or non-IP host keys, set
-`cozystack_master_nodes` explicitly:
+If your inventory uses hostnames or non-IP host keys, set `cozystack_master_nodes` explicitly:
 
 ```yaml
 cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
@@ -418,21 +413,11 @@ cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
 
 ### Automatic Helm installation
 
-The role installs Helm and the
-[helm-diff](https://github.com/databus23/helm-diff) plugin on the
-target node automatically. The `helm-diff` plugin enables true
-idempotency — repeated runs report no changes when the release is
-already up to date.
+The role installs Helm and the [helm-diff](https://github.com/databus23/helm-diff) plugin on the target node automatically. The `helm-diff` plugin enables true idempotency — repeated runs report no changes when the release is already up to date.
 
 ### Customizing variables
 
-The example prepare playbooks define internal variables (like
-`cozystack_k3s_server_args`) in the play `vars` section. User-facing
-variables such as `cozystack_k3s_extra_args` and
-`cozystack_flush_iptables` should be set **in the inventory**, not in
-the playbook. Ansible play `vars` take precedence over inventory
-variables, so defining them in both places causes the inventory values
-to be silently ignored.
+The example prepare playbooks define internal variables (like `cozystack_k3s_server_args`) in the play `vars` section. User-facing variables such as `cozystack_k3s_extra_args` and `cozystack_flush_iptables` should be set **in the inventory**, not in the playbook. Ansible play `vars` take precedence over inventory variables, so defining them in both places causes the inventory values to be silently ignored.
 
 ### Idempotency
 

@@ -117,6 +117,29 @@
         state: restarted
       failed_when: false  # tolerated: same reason as the enable task below
 
+    # Refresh service facts on the same notify topic so the restart
+    # handler below sees the current unit set. Defined first, so it runs
+    # first (handlers fire in definition order, not notify order).
+    - name: Refresh service facts before k3s restart
+      ansible.builtin.service_facts:
+      listen: Restart k3s to apply containerd config
+
+    - name: Restart k3s to apply containerd config
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - k3s
+        - k3s-agent
+      # Restart only the unit that exists on this node: a server runs
+      # k3s, an agent runs k3s-agent, and on a full-pipeline run neither
+      # exists yet when prepare runs (the drop-in is read at first k3s
+      # start instead). service_facts keys systemd units with the
+      # .service suffix. A unit that IS present but fails to restart
+      # still fails the play — a malformed drop-in or a k3s that will not
+      # come back is surfaced, not masked by failed_when: false.
+      when: (item ~ '.service') in ansible_facts.services
+
   tasks:
     - name: Create k3s_cluster group for k3s.orchestration
       ansible.builtin.group_by:
@@ -182,6 +205,58 @@
              | selectattr('stat.exists', 'equalto', true)
              | map(attribute='item')
              | list }}
+
+    # CDI (Containerized Data Importer) streams VM disk images into raw
+    # block volumes from a NON-root importer pod. containerd only chowns
+    # the block device to the pod's SecurityContext UID/GID when
+    # device_ownership_from_security_context is enabled on the CRI
+    # plugin, and k3s ships it disabled. Without it the importer dies
+    # with "blockdev: cannot open /dev/cdi-block-volume: Permission
+    # denied", the DataVolume hangs in ImportInProgress, and every VM
+    # that references the disk stays Pending.
+    #
+    # The drop-in is merged by containerd on top of k3s's generated
+    # config.toml via the config-v3.toml.d import glob — read at first
+    # k3s start (full pipeline) or applied by the handler on re-runs
+    # against a running cluster. config-v3.toml.d and
+    # io.containerd.cri.v1.runtime are the containerd 2.x (config
+    # version 3) paths shipped by current k3s, and the content is
+    # hardcoded for that schema. cozystack_k3s_containerd_dropin_dir
+    # only relocates the file (e.g. a non-default k3s data-dir); it does
+    # not rewrite the content, so a containerd 1.x cluster needs a
+    # hand-written config.toml.d drop-in (version = 2,
+    # io.containerd.grpc.v1.cri) instead.
+    - name: Ensure k3s containerd config drop-in directory exists
+      ansible.builtin.file:
+        path: "{{ cozystack_k3s_containerd_dropin_dir | default('/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d') }}"
+        state: directory
+        mode: "0755"
+      when: cozystack_enable_kubevirt | default(true) | bool
+
+    - name: Enable device_ownership_from_security_context for CDI block imports
+      ansible.builtin.copy:
+        dest: "{{ cozystack_k3s_containerd_dropin_dir | default('/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d') }}/10-cozystack-cri.toml"
+        mode: "0644"
+        content: |
+          version = 3
+
+          [plugins.'io.containerd.cri.v1.runtime']
+            device_ownership_from_security_context = true
+      when: cozystack_enable_kubevirt | default(true) | bool
+      notify: Restart k3s to apply containerd config
+
+    # Reverse the drop-in when KubeVirt is turned off: a host that
+    # carried 10-cozystack-cri.toml from an earlier enabled run would
+    # otherwise keep device_ownership_from_security_context on, so the
+    # host state no longer matches the toggle. Removal notifies the
+    # restart handler so a running cluster drops the setting too. (No-op
+    # when the file was never written — file: absent reports unchanged.)
+    - name: Remove containerd CDI drop-in when KubeVirt is disabled
+      ansible.builtin.file:
+        path: "{{ cozystack_k3s_containerd_dropin_dir | default('/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d') }}/10-cozystack-cri.toml"
+        state: absent
+      when: not (cozystack_enable_kubevirt | default(true) | bool)
+      notify: Restart k3s to apply containerd config
 
     - name: Ensure multipath drop-in directory exists
       ansible.builtin.file:
