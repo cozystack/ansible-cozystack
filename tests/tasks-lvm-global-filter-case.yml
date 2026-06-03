@@ -1,0 +1,63 @@
+---
+# One global_filter scenario, included once per entry in _lvm_cases. Builds a
+# throwaway lvm.conf, runs the same lineinfile the prepare playbooks use, then
+# asks LVM itself (lvmconfig + LVM_SYSTEM_DIR) whether the filter is effective
+# — exactly the post-write check the playbooks run. Expects these play vars:
+# _lvm_base, _lvm_regexp, _lvm_insertafter, _lvm_filter_line, _lvm_default_list.
+- name: Create the {{ item.name }} fixture directory
+  ansible.builtin.file:
+    path: "{{ _lvm_base }}/{{ item.name }}"
+    state: directory
+    mode: "0755"
+
+- name: Write the {{ item.name }} lvm.conf fixture
+  ansible.builtin.copy:
+    dest: "{{ _lvm_base }}/{{ item.name }}/lvm.conf"
+    mode: "0644"
+    content: "{{ item.content }}"
+
+- name: Apply global_filter to the {{ item.name }} fixture (first run)
+  ansible.builtin.lineinfile:
+    path: "{{ _lvm_base }}/{{ item.name }}/lvm.conf"
+    regexp: "{{ _lvm_regexp }}"
+    insertafter: "{{ _lvm_insertafter }}"
+    line: "{{ _lvm_filter_line }}"
+  vars:
+    cozystack_lvm_global_filter: "{{ item.override | default(_lvm_default_list) }}"
+  register: _case_first
+
+- name: Apply global_filter to the {{ item.name }} fixture (second run)
+  ansible.builtin.lineinfile:
+    path: "{{ _lvm_base }}/{{ item.name }}/lvm.conf"
+    regexp: "{{ _lvm_regexp }}"
+    insertafter: "{{ _lvm_insertafter }}"
+    line: "{{ _lvm_filter_line }}"
+  vars:
+    cozystack_lvm_global_filter: "{{ item.override | default(_lvm_default_list) }}"
+  register: _case_second
+
+- name: Ask LVM whether the {{ item.name }} global_filter is effective
+  ansible.builtin.command:
+    cmd: lvmconfig devices/global_filter
+  environment:
+    LVM_SYSTEM_DIR: "{{ _lvm_base }}/{{ item.name }}"
+  register: _case_lvm
+  changed_when: false
+  failed_when: false
+
+- name: Assert the {{ item.name }} case behaves as expected
+  ansible.builtin.assert:
+    that:
+      # The task is idempotent regardless of where the line landed.
+      - _case_first is changed
+      - _case_second is not changed
+      # lvmconfig returns rc 0 only when global_filter sits inside devices {}.
+      - item.effective == (_case_lvm.rc == 0)
+      # When effective, LVM must report exactly the configured list.
+      - (not item.effective) or
+        ((_case_lvm.stdout | regex_replace('^global_filter=', '') | from_json | sort)
+        == ((item.override | default(_lvm_default_list)) | sort))
+    fail_msg: >-
+      Case {{ item.name }}: expected effective={{ item.effective }}, got
+      rc={{ _case_lvm.rc }} stdout='{{ _case_lvm.stdout }}'.
+    success_msg: Case {{ item.name }} behaves as expected.

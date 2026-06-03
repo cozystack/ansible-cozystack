@@ -199,7 +199,10 @@ jobs:
       - name: Install Ansible
         run: pip install ansible-core
 
-      - name: Test host LVM global_filter rendering and lineinfile behaviour
+      - name: Install lvm2 (provides lvmconfig)
+        run: sudo apt-get update && sudo apt-get install --yes lvm2
+
+      - name: Test host LVM global_filter rendering and effectiveness
         run: ansible-playbook tests/test-lvm-global-filter.yml
 
   e2e:
