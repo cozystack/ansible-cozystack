@@ -22,7 +22,7 @@ cluster:
 
     # k3s configuration (used by k3s.orchestration)
     # renovate: datasource=github-releases depName=k3s-io/k3s
-    k3s_version: v1.35.3+k3s1
+    k3s_version: v1.36.1+k3s1
     token: "CHANGE_ME"
     api_endpoint: "10.0.0.10"
     cluster_context: my-cluster
@@ -37,6 +37,13 @@ cluster:
     # Platform Package configuration
     cozystack_root_host: "cozy.example.com"
     cozystack_platform_variant: "isp-full-generic"
+
+    # External IPs for ingress-nginx (required on cloud VMs without native LB)
+    # cozystack_external_ips:
+    #   - "203.0.113.10"
+
+    # Enable ingress on root tenant (creates IngressClass + controller)
+    # cozystack_tenant_root_ingress: true
 
     # Extra k3s flags (used in prepare-ubuntu.yml)
     cozystack_k3s_extra_args: "--tls-san=203.0.113.10"

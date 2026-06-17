@@ -1,0 +1,19 @@
+---
+# Inventory with invalid entries in cozystack_external_ips.
+# Used to verify that IP validation rejects non-IP strings.
+cluster:
+  children:
+    server:
+      hosts:
+        10.0.0.10:
+          ansible_connection: local
+          ansible_host: 127.0.0.1
+    agent:
+      hosts: {}
+
+  vars:
+    ansible_user: runner
+    cozystack_api_server_host: "10.0.0.10"
+    cozystack_root_host: "cozy.example.com"
+    cozystack_external_ips:
+      - "not-an-ip"

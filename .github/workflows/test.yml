@@ -15,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Check version invariants
+        run: ./hack/check-versions.sh
+
+      - name: Self-test version-invariant check
+        run: ./hack/test-check-versions.sh
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -36,6 +42,9 @@ jobs:
 
       - name: Syntax check Ubuntu example
         run: ansible-playbook examples/ubuntu/prepare-ubuntu.yml --syntax-check
+
+      - name: Syntax check Ubuntu sudo workaround
+        run: ansible-playbook examples/ubuntu/prepare-sudo.yml --syntax-check
 
       - name: Syntax check SUSE example
         run: ansible-playbook examples/suse/prepare-suse.yml --syntax-check
@@ -129,6 +138,73 @@ jobs:
 
           echo "OK: Hostname host keys correctly rejected"
 
+  external-ips:
+    name: External IPs validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Build and install collection
+        run: |
+          ansible-galaxy collection build
+          ansible-galaxy collection install cozystack-installer-*.tar.gz --force
+
+      - name: Test external IPs rendering
+        run: >-
+          ansible-playbook tests/test-external-ips.yml
+          --inventory tests/test-external-ips-inventory.yml
+
+      - name: Test invalid IPs are rejected
+        run: |
+          set +e
+          output="$(ansible-playbook tests/test-external-ips.yml \
+            --inventory tests/test-invalid-ips-inventory.yml 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: Expected failure for invalid IPs, but playbook succeeded"
+            exit 1
+          fi
+
+          if ! grep -q "not a valid IP address in cozystack_external_ips" <<< "$output"; then
+            echo "ERROR: Playbook failed, but not due to IP validation"
+            echo "$output"
+            exit 1
+          fi
+
+          echo "OK: Invalid IPs correctly rejected"
+
+  lvm-global-filter:
+    name: LVM global_filter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Install lvm2 (provides lvmconfig)
+        run: sudo apt-get update && sudo apt-get install --yes lvm2
+
+      - name: Test host LVM global_filter rendering and effectiveness
+        run: ansible-playbook tests/test-lvm-global-filter.yml
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
@@ -184,3 +260,102 @@ jobs:
         run: >-
           sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook examples/ubuntu/site.yml
           --inventory tests/ci-inventory.yml
+
+      # Namespace adoption regression test. Reproduces the failure
+      # mode: chart 1.4.0 expects --create-namespace to create
+      # cozy-system on a fresh install, but if the namespace already
+      # exists without helm ownership metadata, helm fails with
+      #   Namespace "cozy-system" exists and cannot be imported into
+      #   the current release: invalid ownership metadata
+      # Strip both the helm release storage Secret (so helm forgets
+      # the release entirely) and the namespace's helm labels and
+      # annotations (so the next install sees an orphan namespace).
+      # This simulates a manual `kubectl create ns` or a remnant
+      # from a previous failed install.
+      - name: Simulate orphan cozy-system namespace
+        run: |
+          set -eux
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            label namespace cozy-system app.kubernetes.io/managed-by-
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            annotate namespace cozy-system \
+              meta.helm.sh/release-name- \
+              meta.helm.sh/release-namespace-
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            delete secret --namespace cozy-system \
+              --selector=owner=helm,name=cozy-installer
+
+      - name: Test namespace adoption (re-install over orphan namespace)
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook examples/ubuntu/site.yml
+          --inventory tests/ci-inventory.yml
+
+      - name: Verify cozy-system namespace was re-adopted
+        run: |
+          set -eux
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          managed_by="$(sudo kubectl --kubeconfig $KUBECONFIG \
+            get namespace cozy-system \
+            --output jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')"
+          release_name="$(sudo kubectl --kubeconfig $KUBECONFIG \
+            get namespace cozy-system \
+            --output jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')"
+          release_namespace="$(sudo kubectl --kubeconfig $KUBECONFIG \
+            get namespace cozy-system \
+            --output jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}')"
+          if [ "$managed_by" != "Helm" ] \
+              || [ "$release_name" != "cozy-installer" ] \
+              || [ "$release_namespace" != "cozy-system" ]; then
+            echo "ERROR: namespace adoption failed"
+            echo "  managed-by label:        '$managed_by' (expected 'Helm')"
+            echo "  release-name annot.:     '$release_name' (expected 'cozy-installer')"
+            echo "  release-namespace annot.: '$release_namespace' (expected 'cozy-system')"
+            exit 1
+          fi
+          echo "OK: cozy-system namespace adopted into helm release"
+
+      # Foreign-owner refusal: re-stamp cozy-system as owned by a
+      # different fake helm release and assert the role fails
+      # rather than silently hijacking ownership.
+      - name: Stamp cozy-system as owned by a different helm release
+        run: |
+          set -eux
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            annotate namespace cozy-system --overwrite \
+              meta.helm.sh/release-name=some-other-release \
+              meta.helm.sh/release-namespace=elsewhere
+
+      - name: Test that foreign-owner namespace is NOT overwritten
+        run: |
+          set +e
+          output="$(sudo env "PATH=$PATH" "HOME=$HOME" \
+            ansible-playbook examples/ubuntu/site.yml \
+            --inventory tests/ci-inventory.yml 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: role silently re-adopted a foreign-owned namespace."
+            echo "Expected refusal because cozy-system is owned by 'some-other-release'."
+            echo "$output" | tail -50
+            exit 1
+          fi
+
+          if ! grep -q "owned by helm release 'some-other-release'" <<< "$output"; then
+            echo "ERROR: role failed but not for the expected reason."
+            echo "$output" | tail -50
+            exit 1
+          fi
+
+          echo "OK: role correctly refused to overwrite foreign helm ownership."
+
+      - name: Restore cozy-system ownership for cleanup
+        run: |
+          set -eux
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          sudo kubectl --kubeconfig $KUBECONFIG \
+            annotate namespace cozy-system --overwrite \
+              meta.helm.sh/release-name=cozy-installer \
+              meta.helm.sh/release-namespace=cozy-system

@@ -6,15 +6,13 @@ Supported targets:
 
 | Example playbook | Distributions | Validated end-to-end |
 | --- | --- | --- |
-| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04, Debian 12 on OCI: 3-node multi-master, 87/87 HelmReleases Ready |
+| `examples/ubuntu/` | Ubuntu 22.04, Ubuntu 24.04, Ubuntu 26.04, Debian 12 | Ubuntu 22.04, Ubuntu 24.04, Debian 12 on OCI: 3-node multi-master, 87/87 HelmReleases Ready. Ubuntu 26.04: best-effort — see Known limitations for the sudo-rs and `linux-modules-extra` notes |
 | `examples/rhel/` | RHEL 8+, CentOS Stream 8+, Rocky 9/10, Alma 9/10 | Rocky 10 on OCI: 3-node multi-master, 87/87 HelmReleases Ready (`cozystack_enable_zfs: false` required — see Known limitations) |
 | `examples/suse/` | openSUSE Leap 15.6+, openSUSE Tumbleweed, SLES 15 | — |
 
 Cloud-image users **must** set `cozystack_flush_iptables: true` for multi-master k3s to bootstrap — Ubuntu cloud images ship with `REJECT icmp-host-prohibited` in INPUT that blocks etcd peer port 2380 between nodes. See **Node Prerequisites → Known limitations** below.
 
-Deploys the Cozystack operator and Platform Package using the
-`kubernetes.core.helm` module with automatic Helm and helm-diff
-installation.
+Deploys the Cozystack operator and Platform Package using the `kubernetes.core.helm` module with automatic Helm and helm-diff installation.
 
 ## Prerequisites
 
@@ -30,9 +28,7 @@ ansible-galaxy collection install --requirements-file requirements.yml
 
 - SSH access to the target nodes
 
-The role automatically installs Helm and the
-[helm-diff](https://github.com/databus23/helm-diff) plugin
-on the control-plane node. No manual Helm installation is needed.
+The role automatically installs Helm and the [helm-diff](https://github.com/databus23/helm-diff) plugin on the control-plane node. No manual Helm installation is needed.
 
 ### Node Prerequisites
 
@@ -67,13 +63,30 @@ LINSTOR uses LVM thin pools by default for local block storage.
 
 #### Required: Kernel headers (Piraeus DRBD loader)
 
-LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source **against the running kernel** at runtime, so only kernel headers must be installed on the host — **no DRBD host packages are needed**. Pin the headers package to `ansible_kernel` so a staged-but-not-yet-booted kernel update doesn't install headers for the wrong kernel.
+LINSTOR uses DRBD 9.x for replication. The Piraeus operator's init container compiles the DRBD kernel module from source **against the running kernel** at runtime, so kernel headers must be installed on the host. Pin the headers package to `ansible_kernel` so a staged-but-not-yet-booted kernel update doesn't install headers for the wrong kernel.
 
 | Ubuntu/Debian | RHEL/CentOS | openSUSE/SLE |
 | --- | --- | --- |
 | `linux-headers-{{ ansible_kernel }}` | `kernel-devel-{{ ansible_kernel }}` plus `kernel-modules-extra-{{ ansible_kernel }}` | `kernel-default-devel` (zypper resolves to running kernel — SUSE's NVR format differs from `uname -r`) |
 
 On Oracle Linux the playbook auto-detects the UEK kernel (`uek` substring in `ansible_kernel`) and installs `kernel-uek-devel-{{ ansible_kernel }}` / `kernel-uek-modules-extra-{{ ansible_kernel }}` instead. Oracle Linux is not on the validated-end-to-end list; this code path is retained best-effort for users who still run the example playbook there. ZFS automation skips on UEK kernels because OpenZFS does not publish kmod builds for UEK.
+
+#### Required on Ubuntu Secure Boot hosts: drbd-dkms
+
+The in-cluster compile path above produces unsigned modules. UEFI Secure Boot's kernel lockdown rejects them at `insmod` time with `Key was rejected by service`, breaking the satellite Pod boot. Common on bare-metal Ubuntu installs (Secure Boot is the firmware default on most modern boards) and on Secure-Boot-enabled cloud SKUs; standard cloud-VM images on AWS/GCP/Azure typically ship without it and the in-cluster path works as-is.
+
+`examples/ubuntu/prepare-ubuntu.yml` installs `drbd-dkms` from the LINBIT PPA on Ubuntu LTS hosts (22.04 / 24.04) so dkms+shim signs the module against a per-host MOK key. The Piraeus loader detects the host-loaded module and exits cleanly without attempting its own compile + insmod.
+
+`drbd-dkms` has a hard apt dependency on `drbd-utils` (≥ 9.28.0), so `drbdadm`/`drbdmeta`/`drbdsetup` land on the host transitively. They are unused at runtime: piraeus-operator's satellite container ships its own copy of `drbd-utils` and invokes that one. The host's `drbd.service` ships disabled by maintainer; the playbook also `systemctl mask`s it so a future `systemctl enable drbd` cannot accidentally race the satellite container. Net result: the only DRBD state managed on the host is the kernel module.
+
+On hosts where Secure Boot is disabled the module loads on first run and no MOK enrollment is needed; the prepare playbook is still safe to run because the dkms build succeeds with an unsigned key the kernel happily accepts under unenforced lockdown. On Secure Boot hosts, the dkms-generated MOK key must be enrolled at the shim console on the next reboot (Enroll MOK → View key → Continue → dkms password). The playbook tolerates the initial modprobe failure pending enrollment and emits a reminder; idempotent re-run after enrollment converges.
+
+Variables (define in inventory to override):
+
+- `cozystack_enable_drbd_dkms` (bool, default `true`): set `false` on Talos hosts (Talos ships signed DRBD modules in extensions) or where Secure Boot is disabled and you prefer the in-cluster compile path.
+- `cozystack_drbd_ppa` (string, default `ppa:linbit/linbit-drbd9-stack`): point at a local mirror of the LINBIT archive.
+
+The PPA-based path is automated only on Ubuntu releases LINBIT keeps current — Jammy (22.04 LTS) and Noble (24.04 LTS) as of 2026. Interim non-LTS releases (Oracular 24.10, Plucky 25.04, etc.) and the next LTS (Resolute 26.04) before LINBIT publishes for them are not in the LINBIT PPA, so the playbook skips the install and emits a notice on those hosts. The supported list is exposed as `cozystack_drbd_supported_releases` (default `[jammy, noble]`); operators can extend it from inventory once LINBIT publishes for a new series, without waiting for a collection release. Operators on unsupported releases must build and sign `drbd-dkms` manually, downgrade to a supported LTS, or disable Secure Boot. Debian is not automated either (no LINBIT Debian PPA). RHEL/SUSE need a separate flow (LINBIT-managed RPM repo + pre-signed kmods) and are out of scope for this collection.
 
 #### Required: Multipath DRBD blacklist
 
@@ -87,6 +100,20 @@ blacklist {
     devnode "^drbd[0-9]+"
 }
 ```
+
+#### Required: Host LVM global_filter
+
+> **Silent failure if omitted.** Without a `global_filter` the host's LVM can scan and auto-activate volume groups that live on DRBD/LINSTOR volumes, ZFS zvols, device-mapper targets, or loop-mounted images. Once the host activates a VG backed by a LINSTOR volume the Piraeus satellite can no longer manage it, and stacked volumes become unavailable after the next reboot.
+
+The prepare playbooks set a `global_filter` in `/etc/lvm/lvm.conf` that rejects virtual and loop devices, mirroring the filter shipped in the Talos machine config:
+
+```text
+global_filter = [ "r|^/dev/drbd.*|", "r|^/dev/dm-.*|", "r|^/dev/zd.*|", "r|^/dev/loop.*|" ]
+```
+
+The list is exposed as `cozystack_lvm_global_filter` (see [Example playbook variables](#example-playbook-variables)). Override it from inventory on hosts whose own physical volumes sit on device-mapper devices — LVM-on-LUKS or LVM-on-multipath, where the PVs are `/dev/dm-*` — so they are not filtered out. Dedicated storage nodes use the default unchanged. The task replaces whatever `global_filter` is already in `lvm.conf` (commented or active), so if a host already has custom filter rules set `cozystack_lvm_global_filter` to the full list you want, not just the entries to add.
+
+After writing the filter the playbook asks LVM itself (`lvmconfig devices/global_filter`) whether it is effective and fails loudly if it is not — for example when `lvm.conf` has no `devices {` section and the setting would land outside any block. This turns a silent no-op into an actionable failure at prep time instead of an unfiltered host after reboot.
 
 #### Required: Containerd + Kubernetes kernel modules
 
@@ -151,11 +178,25 @@ tun
 kvm_intel  # or kvm_amd depending on the CPU
 ```
 
+#### Enabled by default: containerd device ownership for CDI block imports
+
+When KubeVirt is enabled, the prepare playbook drops a containerd CRI config that sets `device_ownership_from_security_context = true`. KubeVirt's CDI (Containerized Data Importer) writes VM disk images into raw **block** volumes from a non-root importer pod; containerd only chowns the block device to the pod's `SecurityContext` UID/GID when this option is on, and k3s ships it disabled. Without it the importer fails with `blockdev: cannot open /dev/cdi-block-volume: Permission denied`, the `DataVolume` is stuck in `ImportInProgress`, and every VM that references the disk stays `Pending` — one of the silent "VMs stuck in Pending" failure modes called out above.
+
+Written as a drop-in that containerd merges on top of k3s's generated `config.toml`:
+
+```text
+/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/10-cozystack-cri.toml
+```
+
+`config-v3.toml.d` and the `io.containerd.cri.v1.runtime` plugin table are the containerd 2.x (config version 3) paths shipped by current k3s (the example inventories pin `k3s_version: v1.36.1+k3s1`), and the drop-in content is hardcoded for that — `version = 3` and the v3 table. `cozystack_k3s_containerd_dropin_dir` only relocates the file; it does not rewrite the content. So on a containerd 1.x cluster (older k3s) this drop-in does not apply as-is — write your own under `config.toml.d/` with `version = 2` and the `io.containerd.grpc.v1.cri` table. The drop-in is read at first k3s start in the full pipeline; on a re-run against a running cluster a handler restarts k3s so the change takes effect.
+
+k3s also exposes a native `--nonroot-devices` flag (valid on both server and agent) that sets the same containerd option. This collection uses the config drop-in instead because it applies uniformly to every node in the `cluster` group — including agent/worker nodes, for which the example playbooks do not wire `extra_agent_args` — and because it can be applied to an already-running cluster, which an install-time k3s flag cannot.
+
+The restart handler only fires when the drop-in is first created or its content changes; idempotent re-runs leave k3s untouched. When it does fire, `systemctl restart k3s` (or `k3s-agent`) briefly disrupts the control plane and the node's workloads on that host, so apply such a change in a maintenance window rather than casually mid-day.
+
 #### Known limitations
 
-ZFS support depends on the OS ecosystem and kernel flavor. The prepare
-playbooks skip ZFS automation gracefully in these cases and emit an
-informational notice:
+ZFS support depends on the OS ecosystem and kernel flavor. The prepare playbooks skip ZFS automation gracefully in these cases and emit an informational notice:
 
 | OS / kernel | ZFS automation | Reason |
 | --- | --- | --- |
@@ -167,6 +208,10 @@ informational notice:
 
 Other subsystem notes:
 
+- **Ubuntu 26.04 LTS:** three changes to be aware of.
+  1. *Auto-applied by `examples/ubuntu/site.yml`*: `sudo-rs` ships as the default `/usr/bin/sudo` alternative and does not honour ansible's `become_method: sudo` privilege-escalation pseudo-tty — every `become: true` task hangs with `Timeout (12s) waiting for privilege escalation prompt`. The classical sudo binary is co-installed at `/usr/bin/sudo.ws`. `site.yml` imports `prepare-sudo.yml` first, which switches the `sudo` alternative back via `update-alternatives` using a `raw` command (so it works even when become is broken). The play is a no-op on releases without sudo-rs. If you bypass `site.yml` and call the prepare playbooks directly, run `prepare-sudo.yml` before any task with `become: true` on 26.04 hosts.
+  2. *Manual inventory setting on 26.04 hosts*: the playbook auto-skips `linux-modules-extra-*` on Ubuntu 26.04+ because the package no longer exists for kernel 7.x — `openvswitch` and `vport-geneve` are bundled into `linux-image-generic`. The auto-skip relies on `ansible_distribution_version`; on hosts where that fact is unreliable, set `cozystack_ubuntu_extra_packages: []` in inventory to skip the apt install explicitly.
+  3. *DRBD via `drbd-dkms` is not automated on releases LINBIT does not publish for*: LINBIT's PPA only ships drbd-dkms for the LTS series they keep current (Jammy 22.04 + Noble 24.04 as of 2026). Interim releases (Oracular 24.10, Plucky 25.04) and the next LTS (Resolute 26.04) before LINBIT publishes are skipped with a notice; on Secure Boot hosts the in-cluster compile path will fail with `Key was rejected by service`. Build and sign `drbd-dkms` manually, downgrade to a supported LTS, extend `cozystack_drbd_supported_releases` from inventory once LINBIT publishes for your release, or disable Secure Boot.
 - **Cloud providers (Ubuntu on OCI, AWS, GCP):** stock Ubuntu cloud images ship an iptables INPUT chain that ends with `REJECT icmp-host-prohibited`, which blocks k3s ports 2380/6443 between nodes. Set `cozystack_flush_iptables: true` in your inventory so the prepare playbook flushes the INPUT chain before k3s installs. Oracle Linux images on OCI do not have this restriction out of the box.
 - **Rocky 10 / Alma 10 (and other RHEL 10 rebuilds):** the `iptables` userspace binary is not installed by default. `examples/rhel/prepare-rhel.yml` installs `iptables-nft` so the `cozystack_flush_iptables` task and k3s kube-proxy replacement have a working `iptables` wrapper over nftables.
 - **ARM64 (aarch64):** OpenZFS does not publish aarch64 RPMs for RHEL-family distributions via `zfsonlinux.org/epel`. Cozystack itself targets x86_64.
@@ -192,9 +237,7 @@ Enable and start:
 
 #### iptables (cloud providers)
 
-Cloud providers (OCI, AWS, GCP) may ship images with restrictive iptables
-INPUT rules that block inter-node Kubernetes traffic (API 6443, kubelet 10250,
-etcd 2379-2380) even when security groups allow it.
+Cloud providers (OCI, AWS, GCP) may ship images with restrictive iptables INPUT rules that block inter-node Kubernetes traffic (API 6443, kubelet 10250, etcd 2379-2380) even when security groups allow it.
 
 Fix: flush the INPUT chain and set policy to ACCEPT before deploying k3s.
 
@@ -228,11 +271,7 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 ```
 
-These CIDRs are the k3s defaults. The example prepare playbooks
-(e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the
-`server_config_yaml` variable used by `k3s.orchestration`. The role
-variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match —
-they default to the same values.
+These CIDRs are the k3s defaults. The example prepare playbooks (e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the `server_config_yaml` variable used by `k3s.orchestration`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
 
 ## Installation
 
@@ -252,8 +291,7 @@ collections:
 
 ## Quick start
 
-1. Create your environment (pick your distro — see `examples/ubuntu/`,
-   `examples/rhel/`, or `examples/suse/`):
+1. Create your environment (pick your distro — see `examples/ubuntu/`, `examples/rhel/`, or `examples/suse/`):
 
 ```text
 my-env/
@@ -293,9 +331,7 @@ Both stages are handled automatically by the `cozystack` role.
 
 ## Role: cozystack.installer.cozystack
 
-Installs Cozystack via the official `cozy-installer` Helm chart using
-the `kubernetes.core.helm` module with automatic Helm and helm-diff
-installation.
+Installs Cozystack via the official `cozy-installer` Helm chart using the `kubernetes.core.helm` module with automatic Helm and helm-diff installation.
 
 Runs on `server[0]` only.
 
@@ -310,9 +346,8 @@ Runs on `server[0]` only.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_chart_ref` | `oci://ghcr.io/cozystack/cozystack/cozy-installer` | Helm chart OCI reference |
-| `cozystack_chart_version` | `1.2.2` | Helm chart version |
+| `cozystack_chart_version` | `1.3.1` | Helm chart version |
 | `cozystack_release_name` | `cozy-installer` | Helm release name |
-| `cozystack_namespace` | `cozy-system` | Namespace for operator and resources |
 | `cozystack_release_namespace` | `kube-system` | Namespace for Helm release secret |
 | `cozystack_operator_variant` | `generic` | Operator variant: generic, talos, hosted |
 | `cozystack_api_server_port` | `6443` | API server port |
@@ -322,6 +357,8 @@ Runs on `server[0]` only.
 | `cozystack_create_platform_package` | `true` | Create Platform Package CR after install |
 | `cozystack_platform_variant` | `isp-full-generic` | Platform variant: default, isp-full, isp-hosted, isp-full-generic |
 | `cozystack_root_host` | `""` | Domain for Cozystack services (empty = skip publishing) |
+| `cozystack_external_ips` | `[]` | List of external IPs for ingress-nginx Service. Required on platforms without a native LB (cloud VMs, bare metal). Each entry must be a valid IPv4/IPv6 address. |
+| `cozystack_tenant_root_ingress` | `false` | Enable ingress on the root tenant. When `true`, patches the root Tenant CR after Platform Package apply to create IngressClass and ingress-nginx controller. |
 | `cozystack_pod_cidr` | `10.42.0.0/16` | Pod CIDR for Platform Package |
 | `cozystack_pod_gateway` | `10.42.0.1` | Pod gateway |
 | `cozystack_svc_cidr` | `10.43.0.0/16` | Service CIDR |
@@ -331,23 +368,25 @@ Runs on `server[0]` only.
 
 ### Example playbook variables
 
-These variables are consumed only by the example prepare playbooks in
-`examples/*/`, not by the role itself. Set them as inventory host/group
-vars to opt out of the corresponding prepare step:
+These variables are consumed only by the example prepare playbooks in `examples/*/`, not by the role itself. Set them as inventory host/group vars to opt out of the corresponding prepare step:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `cozystack_enable_zfs` | `true` | Example playbooks: install ZFS userspace and load the module. Set `false` to skip. |
-| `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules. Set `false` to skip. |
+| `cozystack_enable_kubevirt` | `true` | Example playbooks: load KubeVirt kernel modules **and** install the containerd `device_ownership_from_security_context` drop-in for CDI block imports. Set `false` to skip both. |
+| `cozystack_k3s_containerd_dropin_dir` | `/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d` | Example playbooks: directory for the containerd CRI drop-in (gated on `cozystack_enable_kubevirt`). Only relocates the file — the drop-in content is hardcoded for containerd 2.x (config v3); a containerd 1.x cluster needs a hand-written `config.toml.d` drop-in instead. |
 | `cozystack_flush_iptables` | `false` | Example playbooks: flush the iptables INPUT chain before k3s installs. Set `true` on Ubuntu/Debian cloud images (OCI/AWS/GCP) where the default INPUT chain ends with `REJECT icmp-host-prohibited` and blocks k3s inter-node ports 2380/6443. |
+| `cozystack_lvm_global_filter` | `["r\|^/dev/drbd.*\|", "r\|^/dev/dm-.*\|", "r\|^/dev/zd.*\|", "r\|^/dev/loop.*\|"]` | Example playbooks: LVM `global_filter` written into `/etc/lvm/lvm.conf` so the host does not scan or activate volume groups backed by DRBD/LINSTOR volumes, ZFS zvols, device-mapper targets, or loop images. Override on hosts whose own PVs live on device-mapper devices (LVM-on-LUKS, multipath) — e.g. drop the `r\|^/dev/dm-.*\|` entry. |
 | `cozystack_zfs_release_rpm_extra` | `{}` | `examples/rhel/` only: merged on top of the built-in `cozystack_zfs_release_rpm_by_major` dict, so you can add (or override) a single EL-major → OpenZFS release RPM entry from inventory without wiping the base dict. Example: `{"10": "https://zfsonlinux.org/epel/zfs-release-X-Y.el10.noarch.rpm"}` once upstream ships one. |
+| `cozystack_enable_drbd_dkms` | `true` | `examples/ubuntu/` only: install `drbd-dkms` from the LINBIT PPA on Ubuntu LTS 22.04 / 24.04 hosts so DRBD's kernel module is signed via dkms+shim under Secure Boot. Set `false` on Talos hosts (Talos ships pre-signed DRBD modules in extensions) or where Secure Boot is disabled and the in-cluster compile path is preferred. The toggle stops *future* installs but does NOT undo a prior install — manually `apt purge drbd-dkms` and remove the LINBIT entry from `/etc/apt/sources.list.d/` if you flipped to `false` after a successful run. |
+| `cozystack_drbd_ppa` | `ppa:linbit/linbit-drbd9-stack` | `examples/ubuntu/` only: override to point at a Launchpad PPA mirror of the LINBIT archive. `ansible.builtin.apt_repository` resolves the signing key for `ppa:` URIs by querying Launchpad's REST API directly (no extra packages required). Non-Launchpad URIs (`deb http://internal-mirror/...`) work but you must manage the apt signing key separately — drop a keyring under `/etc/apt/keyrings/` and add `signed-by=` to the repo line. |
+| `cozystack_drbd_supported_releases` | `[jammy, noble]` | `examples/ubuntu/` only: list of Ubuntu release codenames LINBIT's PPA publishes drbd-dkms for. Extend from inventory when LINBIT adds a new series (e.g. `[jammy, noble, resolute]`) without waiting for a collection release. The playbook skips the install and emits a notice on Ubuntu hosts whose `ansible_distribution_release` is not in this list. |
 
 ## Using with k3s
 
 This collection is designed to work alongside [k3s.orchestration](https://github.com/k3s-io/k3s-ansible). The inventory structure (groups: `cluster`, `server`, `agent`) is fully compatible.
 
-Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`,
-or `examples/suse/`:
+Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`, or `examples/suse/`:
 
 ```yaml
 - name: Prepare nodes
@@ -368,12 +407,9 @@ On cloud providers with NAT (OCI, AWS, GCP), nodes have internal IPs different f
 
 ### Multi-master setup (kube-ovn RAFT)
 
-Kube-ovn requires `MASTER_NODES` — a comma-separated list of all
-control-plane node IPs for OVN RAFT consensus. By default, the role
-auto-detects these IPs from the `server` inventory group host keys.
+Kube-ovn requires `MASTER_NODES` — a comma-separated list of all control-plane node IPs for OVN RAFT consensus. By default, the role auto-detects these IPs from the `server` inventory group host keys.
 
-This works when host keys are internal IPs (the recommended inventory
-pattern):
+This works when host keys are internal IPs (the recommended inventory pattern):
 
 ```yaml
 server:
@@ -384,8 +420,7 @@ server:
       ansible_host: 203.0.113.11
 ```
 
-If your inventory uses hostnames or non-IP host keys, set
-`cozystack_master_nodes` explicitly:
+If your inventory uses hostnames or non-IP host keys, set `cozystack_master_nodes` explicitly:
 
 ```yaml
 cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
@@ -393,21 +428,11 @@ cozystack_master_nodes: "10.0.0.10,10.0.0.11,10.0.0.12"
 
 ### Automatic Helm installation
 
-The role installs Helm and the
-[helm-diff](https://github.com/databus23/helm-diff) plugin on the
-target node automatically. The `helm-diff` plugin enables true
-idempotency — repeated runs report no changes when the release is
-already up to date.
+The role installs Helm and the [helm-diff](https://github.com/databus23/helm-diff) plugin on the target node automatically. The `helm-diff` plugin enables true idempotency — repeated runs report no changes when the release is already up to date.
 
 ### Customizing variables
 
-The example prepare playbooks define internal variables (like
-`cozystack_k3s_server_args`) in the play `vars` section. User-facing
-variables such as `cozystack_k3s_extra_args` and
-`cozystack_flush_iptables` should be set **in the inventory**, not in
-the playbook. Ansible play `vars` take precedence over inventory
-variables, so defining them in both places causes the inventory values
-to be silently ignored.
+The example prepare playbooks define internal variables (like `cozystack_k3s_server_args`) in the play `vars` section. User-facing variables such as `cozystack_k3s_extra_args` and `cozystack_flush_iptables` should be set **in the inventory**, not in the playbook. Ansible play `vars` take precedence over inventory variables, so defining them in both places causes the inventory values to be silently ignored.
 
 ### Idempotency
 

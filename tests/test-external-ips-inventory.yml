@@ -1,0 +1,20 @@
+---
+# Test inventory with external IPs and root host set.
+# Used to verify externalIPs rendering in the Platform Package template.
+cluster:
+  children:
+    server:
+      hosts:
+        10.0.0.10:
+          ansible_connection: local
+          ansible_host: 127.0.0.1
+    agent:
+      hosts: {}
+
+  vars:
+    ansible_user: runner
+    cozystack_api_server_host: "10.0.0.10"
+    cozystack_root_host: "cozy.example.com"
+    cozystack_external_ips:
+      - "203.0.113.10"
+      - "203.0.113.11"

@@ -10,17 +10,21 @@
 cozystack_chart_ref: "oci://ghcr.io/cozystack/cozystack/cozy-installer"
 
 # Helm chart version (synced with Cozystack release)
-cozystack_chart_version: "1.2.2"
+cozystack_chart_version: "1.4.3"
 
 # Helm release name
 cozystack_release_name: "cozy-installer"
 
-# Kubernetes namespace where Cozystack operator and resources live
-cozystack_namespace: "cozy-system"
-
-# Namespace for the Helm release secret (the chart creates cozy-system
-# via its own template, so the release must live in a pre-existing namespace)
-cozystack_release_namespace: "kube-system"
+# Namespace for the Helm release secret. Co-located with the operator
+# namespace `cozy-system` (hardcoded in the chart's
+# templates/cozystack-operator.yaml — no values key to override). From
+# chart 1.4.0 the chart no longer ships a Namespace resource for
+# cozy-system and instead expects the caller to create it via
+# `helm install --create-namespace`; this role passes
+# create_namespace=true to kubernetes.core.helm so the release namespace
+# is born just-in-time, and the chart's pre-install hook can then label
+# it for PodSecurity.
+cozystack_release_namespace: "cozy-system"
 
 # Operator deployment variant: generic, talos, hosted
 cozystack_operator_variant: "generic"
@@ -52,6 +56,16 @@ cozystack_platform_variant: "isp-full-generic"
 # Domain for Cozystack services (dashboard, grafana, etc.)
 # Leave empty to skip publishing config in the Platform Package
 cozystack_root_host: ""
+
+# External IPs for ingress-nginx Service (type: LoadBalancer).
+# Required on platforms without a native LB (cloud VMs, bare metal).
+# Each entry must be a valid IPv4 or IPv6 address.
+cozystack_external_ips: []
+
+# Enable ingress on the root tenant (tenant-root).
+# When true, patches the root Tenant CR after Platform Package apply
+# so that IngressClass and ingress-nginx controller are created.
+cozystack_tenant_root_ingress: false
 
 # Comma-separated control-plane node IPs for kube-ovn RAFT consensus.
 # Empty = auto-detect from 'server' inventory group host keys.
