@@ -1,7 +1,8 @@
 ---
 # Example: Prepare RHEL 8+/CentOS Stream 8+/Rocky/Alma nodes for Cozystack
-# This playbook installs required packages, configures kernel parameters,
-# and sets k3s server arguments compatible with k3s.orchestration collection.
+# This playbook installs required packages and configures kernel
+# parameters. The cozystack-tuned k3s flags for the k3s.orchestration
+# collection live in group_vars/all.yml, not here.
 #
 # Run before k3s deployment: ansible-playbook prepare-rhel.yml
 

@@ -1,7 +1,8 @@
 ---
 # Example: Prepare Ubuntu/Debian nodes for Cozystack
-# This playbook installs required packages, configures kernel parameters,
-# and sets k3s server arguments compatible with k3s.orchestration collection.
+# This playbook installs required packages and configures kernel
+# parameters. The cozystack-tuned k3s flags for the k3s.orchestration
+# collection live in group_vars/all.yml, not here.
 #
 # Targets Ubuntu 22.04+ / 24.04 and Debian 12. Distro-specific parts:
 # - linux-modules-extra is only installed on Ubuntu (ships openvswitch
