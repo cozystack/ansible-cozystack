@@ -45,6 +45,17 @@ Bugfixes
   the restart handler only restarts a k3s unit that is actually present
   (a genuine restart failure now fails the play instead of being
   silently ignored).
+- Example inventories now declare the ``k3s_cluster`` group statically
+  and carry the Cozystack-tuned k3s settings
+  (``extra_server_args``/``server_config_yaml``, component disables,
+  CIDRs, cluster domain) in ``examples/*/group_vars/all.yml`` instead of
+  setting them via ``set_fact`` in the prepare playbooks. The old
+  approach only worked inside a single ``ansible-playbook`` process:
+  running ``prepare-<distro>.yml`` and ``k3s.orchestration.site`` as
+  separate invocations silently dropped the flags and produced an
+  upstream-default k3s (traefik, servicelb, flannel and kube-proxy
+  enabled; wrong CIDRs). The ``group_by`` fallback remains for custom
+  inventories run via the chained ``site.yml``.
 
 
 v1.4.0
