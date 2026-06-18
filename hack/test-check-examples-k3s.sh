@@ -58,4 +58,17 @@ run_negative "extra_server_args garbled (flags dropped)" \
 run_negative "server_config_yaml blanked" \
   "examples/ubuntu/group_vars/all.yml" '.server_config_yaml = ""'
 
+# Variable re-introduced into a prepare playbook (set_fact / play-vars
+# regression) — must be rejected even while group_vars stays correct.
+echo "-- negative: extra_server_args reintroduced in a prepare playbook --"
+pp="$tmpdir/examples/ubuntu/prepare-ubuntu.yml"
+cp "$pp" "$pp.bak"
+printf '\n# regression: extra_server_args reintroduced at play scope\n' >>"$pp"
+rc=0
+(cd "$tmpdir" && ./hack/check-examples-k3s.sh) >/dev/null 2>&1 || rc=$?
+mv "$pp.bak" "$pp"
+if [ "$rc" -eq 0 ]; then
+  fail "reintroduced extra_server_args in a prepare playbook but guard returned 0"
+fi
+
 echo "OK: all check-examples-k3s tests passed"

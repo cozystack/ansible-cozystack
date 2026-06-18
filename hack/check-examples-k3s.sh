@@ -81,6 +81,15 @@ for d in "${distros[@]}"; do
       fail "$d: server_config_yaml does not resolve '$key' in a standalone invocation"
     fi
   done
+
+  # 4. The prepare playbook must NOT re-introduce these variables at play
+  #    scope (set_fact / play vars): a play var outranks group_vars on the
+  #    chained path while the split path stays broken — the exact bug class
+  #    this fix removed.
+  pp="examples/$d/prepare-$d.yml"
+  if grep --extended-regexp --quiet 'extra_server_args|server_config_yaml' "$pp"; then
+    fail "$pp: must not reference extra_server_args/server_config_yaml (they belong in group_vars/all.yml)"
+  fi
 done
 
 if [ "$err" -ne 0 ]; then
