@@ -55,7 +55,10 @@ Bugfixes
   separate invocations silently dropped the flags and produced an
   upstream-default k3s (traefik, servicelb, flannel and kube-proxy
   enabled; wrong CIDRs). The ``group_by`` fallback remains for custom
-  inventories run via the chained ``site.yml``.
+  inventories run via the chained ``site.yml``. A CI guard
+  (``hack/check-examples-k3s.sh``, self-tested by
+  ``hack/test-check-examples-k3s.sh``) fails the build if the contract
+  regresses — the failure mode is otherwise silent.
 
 
 v1.4.0
