@@ -257,7 +257,7 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 ```
 
-These CIDRs are the k3s defaults. The example prepare playbooks (e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the `server_config_yaml` variable used by `k3s.orchestration`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
+These CIDRs are the k3s defaults. The example clusters set them via the `server_config_yaml` variable consumed by `k3s.orchestration`, defined in `examples/<distro>/group_vars/all.yml`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
 
 ## Installation
 
