@@ -1,6 +1,15 @@
 ---
 # CI inventory: runs on the GitHub Actions Ubuntu runner itself.
 # k3s is installed directly on the runner (no containers/VMs).
+#
+# This inventory is used ONLY via the chained examples/ubuntu/site.yml run
+# (ansible-playbook examples/ubuntu/site.yml --inventory tests/ci-inventory.yml).
+# It deliberately omits a static k3s_cluster group and the cozystack k3s
+# flags: the k3s_cluster group is created by the group_by task in
+# prepare-ubuntu.yml, and extra_server_args / server_config_yaml are loaded
+# from examples/ubuntu/group_vars/all.yml (playbook-adjacent group_vars) —
+# both within the same ansible-playbook process. Do not run this inventory
+# against a standalone k3s.orchestration.site invocation.
 cluster:
   children:
     server:
