@@ -299,6 +299,57 @@
           }
       notify: Restart multipathd
 
+    # Exclude DRBD, device-mapper, zvol and loop devices from the host's
+    # LVM device scanning. Without this the host LVM may scan and activate
+    # volume groups backed by LINSTOR/DRBD volumes — or located inside
+    # loop-mounted images — making them unavailable to the satellite.
+    # Mirrors the global_filter shipped in the Talos machine config.
+    # Override cozystack_lvm_global_filter from inventory on hosts whose
+    # own PVs sit on device-mapper devices (LVM-on-LUKS, multipath) so
+    # they are not filtered out — e.g. drop the "r|^/dev/dm-.*|" entry.
+    - name: Set the default host LVM global_filter
+      ansible.builtin.set_fact:
+        _cozystack_lvm_default_filter:
+          - "r|^/dev/drbd.*|"
+          - "r|^/dev/dm-.*|"
+          - "r|^/dev/zd.*|"
+          - "r|^/dev/loop.*|"
+
+    - name: Exclude virtual and loop devices from host LVM scanning
+      ansible.builtin.lineinfile:
+        path: /etc/lvm/lvm.conf
+        regexp: '^\s*#?\s*global_filter\s*='
+        insertafter: '^\s*devices\s*{'
+        line: '        global_filter = {{ cozystack_lvm_global_filter | default(_cozystack_lvm_default_filter) | to_json }}'
+
+    # Confirm LVM honours the filter and applied the requested list.
+    # `lvmconfig devices/global_filter` reports the value only when it sits
+    # inside the devices {} block, so a filter that landed elsewhere (an
+    # lvm.conf with no devices section, or a stale duplicate outside the block
+    # that won the lineinfile match) is caught here instead of silently
+    # leaving the host LVM unfiltered or running an old filter.
+    - name: Read back the effective host LVM global_filter
+      ansible.builtin.command:
+        cmd: lvmconfig devices/global_filter
+      register: _cozystack_lvm_filter_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if the host LVM does not honour the configured global_filter
+      ansible.builtin.assert:
+        that:
+          - _cozystack_lvm_filter_check.rc == 0
+          - _cozystack_lvm_filter_check.rc != 0 or
+            ((_cozystack_lvm_filter_check.stdout | regex_replace('^global_filter=', '') | from_json | sort)
+            == ((cozystack_lvm_global_filter | default(_cozystack_lvm_default_filter)) | sort))
+        fail_msg: >-
+          LVM does not report the configured global_filter as active
+          (rc={{ _cozystack_lvm_filter_check.rc }}, value
+          '{{ _cozystack_lvm_filter_check.stdout }}'). It likely landed outside
+          the devices {} block or a stale entry won — ensure /etc/lvm/lvm.conf
+          has a 'devices {' section and no conflicting global_filter.
+        success_msg: Host LVM global_filter is active.
+
     - name: Configure sysctl parameters
       ansible.posix.sysctl:
         name: "{{ item.name }}"

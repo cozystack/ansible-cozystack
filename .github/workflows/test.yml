@@ -190,6 +190,27 @@ jobs:
 
           echo "OK: Invalid IPs correctly rejected"
 
+  lvm-global-filter:
+    name: LVM global_filter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Install lvm2 (provides lvmconfig)
+        run: sudo apt-get update && sudo apt-get install --yes lvm2
+
+      - name: Test host LVM global_filter rendering and effectiveness
+        run: ansible-playbook tests/test-lvm-global-filter.yml
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
