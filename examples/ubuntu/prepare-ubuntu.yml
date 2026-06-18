@@ -108,24 +108,6 @@
     # Override cozystack_drbd_ppa from inventory to point at a local
     # mirror of the LINBIT archive.
 
-    # k3s server arguments required by Cozystack.
-    # These disable built-in components that Cozystack replaces.
-    cozystack_k3s_server_args: >-
-      --disable=traefik
-      --disable=servicelb
-      --disable=local-storage
-      --disable=metrics-server
-      --disable-network-policy
-      --disable-kube-proxy
-      --flannel-backend=none
-      --cluster-domain=cozy.local
-      --kubelet-arg=max-pods=220
-
-    # k3s server config YAML (CIDRs).
-    cozystack_k3s_server_config_yaml: |
-      cluster-cidr: 10.42.0.0/16
-      service-cidr: 10.43.0.0/16
-
   handlers:
     - name: Restart multipathd
       ansible.builtin.systemd:
@@ -162,21 +144,15 @@
       when: (item ~ '.service') in ansible_facts.services
 
   tasks:
+    # Backward-compat for custom inventories that do not declare the
+    # k3s_cluster group statically: group_by recreates it in-process so a
+    # chained site.yml run still works. The shipped inventory.yml declares
+    # the group statically, and the cozystack k3s settings now live in
+    # group_vars/all.yml, so a split prepare + k3s.orchestration.site run
+    # keeps the tuned configuration.
     - name: Create k3s_cluster group for k3s.orchestration
       ansible.builtin.group_by:
         key: k3s_cluster
-
-    - name: Set k3s server args for Cozystack
-      ansible.builtin.set_fact:
-        extra_server_args: >-
-          {{ cozystack_k3s_server_args }}
-          {{ cozystack_k3s_extra_args | default("") }}
-      when: extra_server_args is not defined
-
-    - name: Set k3s server config for Cozystack
-      ansible.builtin.set_fact:
-        server_config_yaml: "{{ cozystack_k3s_server_config_yaml }}"
-      when: server_config_yaml is not defined
 
     # Single source of truth for the LINBIT-PPA-supported release
     # codename list. Inventory may extend the list (e.g.

@@ -1,0 +1,35 @@
+---
+# Cozystack-tuned k3s configuration consumed by the k3s.orchestration
+# collection. Declared at inventory scope (group_vars) rather than via
+# set_fact in prepare-ubuntu.yml so the values survive across separate
+# `ansible-playbook` invocations. Running prepare-ubuntu.yml and
+# k3s.orchestration.site as two commands (instead of one chained
+# site.yml run) would otherwise drop these settings: set_fact stores
+# host facts in a single process's memory, gone in the next
+# ansible-playbook process, leaving k3s to silently take its upstream
+# defaults.
+
+# Base k3s server flags required by Cozystack: disable the bundled
+# components Cozystack replaces, set the cluster domain and pod cap.
+cozystack_k3s_server_args: >-
+  --disable=traefik
+  --disable=servicelb
+  --disable=local-storage
+  --disable=metrics-server
+  --disable-network-policy
+  --disable-kube-proxy
+  --flannel-backend=none
+  --cluster-domain=cozy.local
+  --kubelet-arg=max-pods=220
+
+# Pod / service CIDRs written into /etc/rancher/k3s/config.yaml.
+cozystack_k3s_server_config_yaml: |
+  cluster-cidr: 10.42.0.0/16
+  service-cidr: 10.43.0.0/16
+
+# Variables consumed directly by the k3s.orchestration collection.
+# Composed from the Cozystack defaults above plus any operator-supplied
+# extra flags (cozystack_k3s_extra_args from inventory, e.g. --tls-san).
+extra_server_args: >-
+  {{ cozystack_k3s_server_args }} {{ cozystack_k3s_extra_args | default("") }}
+server_config_yaml: "{{ cozystack_k3s_server_config_yaml }}"
