@@ -3,6 +3,7 @@ cozystack.installer Release Notes
 =================================
 
 Unreleased
+==========
 
 - CI: new ``hack/check-versions.sh`` invariant check runs in the ``Lint``
   job and fails the build if version strings drift across the three
@@ -18,9 +19,6 @@ Unreleased
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
   balancer (cloud VMs, bare metal).
-
-Unreleased
-==========
 
 Bugfixes
 --------
