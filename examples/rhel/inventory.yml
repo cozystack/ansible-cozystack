@@ -38,8 +38,17 @@ cluster:
     # Enable ingress on root tenant (creates IngressClass + controller)
     # cozystack_tenant_root_ingress: true
 
-    # Extra k3s flags (used in prepare-rhel.yml)
+    # Extra k3s flags appended to extra_server_args in group_vars/all.yml
     cozystack_k3s_extra_args: "--tls-san=203.0.113.10"
 
     # OCI: enable iptables flush (cloud images may block non-SSH traffic)
     # cozystack_flush_iptables: true
+
+# Static k3s_cluster group required by the k3s.orchestration collection.
+# Declared statically (not only via the group_by fallback in
+# prepare-rhel.yml) so it exists when k3s.orchestration.site runs as a
+# standalone invocation, not just when chained through site.yml.
+k3s_cluster:
+  children:
+    server:
+    agent:
