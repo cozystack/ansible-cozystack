@@ -52,6 +52,12 @@ jobs:
       - name: Syntax check RHEL example
         run: ansible-playbook examples/rhel/prepare-rhel.yml --syntax-check
 
+      - name: Check examples split-invocation contract
+        run: ./hack/check-examples-k3s.sh
+
+      - name: Self-test examples split-invocation check
+        run: ./hack/test-check-examples-k3s.sh
+
   sanity:
     name: Sanity
     runs-on: ubuntu-latest

@@ -271,7 +271,7 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 ```
 
-These CIDRs are the k3s defaults. The example prepare playbooks (e.g., `examples/ubuntu/prepare-ubuntu.yml`) set them via the `server_config_yaml` variable used by `k3s.orchestration`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
+These CIDRs are the k3s defaults. The example clusters set them via the `server_config_yaml` variable consumed by `k3s.orchestration`, defined in `examples/<distro>/inventory.yml`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
 
 ## Installation
 
@@ -399,6 +399,15 @@ Example full pipeline (`site.yml`) — see `examples/ubuntu/`, `examples/rhel/`,
   ansible.builtin.import_playbook: cozystack.installer.site
 ```
 
+The Cozystack-tuned k3s flags (component disables, CIDRs, cluster domain) and the static `k3s_cluster` group both live in each example's `inventory.yml`. Being inventory-scoped, they apply to every play in every `ansible-playbook` process — including the `k3s.orchestration.site` playbook that `site.yml` imports from the collection directory — so the steps can be run chained through `site.yml` or as separate invocations:
+
+```bash
+ansible-playbook --inventory inventory.yml prepare-<distro>.yml
+ansible-playbook --inventory inventory.yml k3s.orchestration.site
+```
+
+Keeping them in the inventory is required, not cosmetic. `set_fact`/`group_by` (play scope) live only inside one process, so splitting the run dropped them. A playbook-adjacent `group_vars/all.yml` is not loaded for the imported `k3s.orchestration.site` play either, so under an external inventory (as CI uses) it silently produced an upstream-default k3s. Inventory vars avoid both traps. Custom inventories must carry these k3s vars and the `k3s_cluster` group (`children: server, agent`) themselves.
+
 ## Important notes
 
 ### apiServerHost must be the internal IP
@@ -432,7 +441,7 @@ The role installs Helm and the [helm-diff](https://github.com/databus23/helm-dif
 
 ### Customizing variables
 
-The example prepare playbooks define internal variables (like `cozystack_k3s_server_args`) in the play `vars` section. User-facing variables such as `cozystack_k3s_extra_args` and `cozystack_flush_iptables` should be set **in the inventory**, not in the playbook. Ansible play `vars` take precedence over inventory variables, so defining them in both places causes the inventory values to be silently ignored.
+All k3s variables live in `examples/<distro>/inventory.yml`. The tuned defaults (`cozystack_k3s_server_args`, `cozystack_k3s_server_config_yaml`, and the composed `extra_server_args` / `server_config_yaml`) sit in the `cluster` group's `vars:` block — edit them there to change the base flags or CIDRs, and use `cozystack_k3s_extra_args` to append flags without touching the defaults (it is concatenated onto `extra_server_args`). These must stay at inventory scope: a playbook-adjacent `group_vars/all.yml` would not reach the `k3s.orchestration.site` play that `site.yml` imports, silently dropping the flags.
 
 ### Idempotency
 
