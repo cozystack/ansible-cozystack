@@ -46,20 +46,29 @@ run_negative() {
 run_negative "k3s_cluster group removed" \
   "examples/suse/inventory.yml" 'del(.k3s_cluster)'
 
-# group_vars variable deleted — a fresh process cannot resolve it.
-run_negative "extra_server_args missing from group_vars" \
-  "examples/ubuntu/group_vars/all.yml" 'del(.extra_server_args)'
+# Inventory-scope variable deleted — a fresh process / imported play cannot
+# resolve it.
+run_negative "extra_server_args missing from inventory vars" \
+  "examples/ubuntu/inventory.yml" 'del(.cluster.vars.extra_server_args)'
 
-# Variable present but garbled — structural check passes, behavioural fails.
+# Variable present but garbled — structural check passes, the import-boundary
+# behavioural check must catch the dropped flags.
 run_negative "extra_server_args garbled (flags dropped)" \
-  "examples/rhel/group_vars/all.yml" '.extra_server_args = "nonsense"'
+  "examples/rhel/inventory.yml" '.cluster.vars.extra_server_args = "nonsense"'
 
 # CIDR config blanked — behavioural check must catch the dropped CIDRs.
 run_negative "server_config_yaml blanked" \
-  "examples/ubuntu/group_vars/all.yml" '.server_config_yaml = ""'
+  "examples/ubuntu/inventory.yml" '.cluster.vars.server_config_yaml = ""'
+
+# Tuned constant drifted in one inventory while still carrying the required
+# flags — the cross-inventory consistency check must catch it even though the
+# behavioural check still passes for that file.
+run_negative "cozystack_k3s_server_args drifted in one inventory" \
+  "tests/ci-inventory.yml" \
+  '.cluster.vars.cozystack_k3s_server_args = "--disable=traefik --disable=servicelb --disable=local-storage --disable=metrics-server --disable-network-policy --disable-kube-proxy --flannel-backend=none --cluster-domain=cozy.local --kubelet-arg=max-pods=999"'
 
 # Variable re-introduced into a prepare playbook (set_fact / play-vars
-# regression) — must be rejected even while group_vars stays correct.
+# regression) — must be rejected even while the inventory stays correct.
 echo "-- negative: extra_server_args reintroduced in a prepare playbook --"
 pp="$tmpdir/examples/ubuntu/prepare-ubuntu.yml"
 cp "$pp" "$pp.bak"

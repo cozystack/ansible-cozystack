@@ -57,17 +57,25 @@ Bugfixes
 - Example inventories now declare the ``k3s_cluster`` group statically
   and carry the Cozystack-tuned k3s settings
   (``extra_server_args``/``server_config_yaml``, component disables,
-  CIDRs, cluster domain) in ``examples/*/group_vars/all.yml`` instead of
-  setting them via ``set_fact`` in the prepare playbooks. The old
-  approach only worked inside a single ``ansible-playbook`` process:
-  running ``prepare-<distro>.yml`` and ``k3s.orchestration.site`` as
-  separate invocations silently dropped the flags and produced an
-  upstream-default k3s (traefik, servicelb, flannel and kube-proxy
-  enabled; wrong CIDRs). The ``group_by`` fallback remains for custom
+  CIDRs, cluster domain) in each ``inventory.yml`` at inventory scope,
+  instead of setting them via ``set_fact`` in the prepare playbooks.
+  ``set_fact`` only survives inside a single ``ansible-playbook``
+  process, so running ``prepare-<distro>.yml`` and
+  ``k3s.orchestration.site`` as separate invocations silently dropped
+  the flags and produced an upstream-default k3s (traefik, servicelb,
+  flannel and kube-proxy enabled; wrong CIDRs; ``cluster.local``
+  domain). Inventory scope is required rather than a playbook-adjacent
+  ``group_vars/all.yml``: playbook group_vars are not loaded for the
+  ``k3s.orchestration.site`` playbook that ``site.yml`` imports from the
+  collection directory, so under an external inventory (as CI uses) the
+  flags would silently vanish there too — including on the chained
+  ``site.yml`` path. ``tests/ci-inventory.yml`` therefore carries the
+  same settings. The ``group_by`` fallback remains for custom
   inventories run via the chained ``site.yml``. A CI guard
   (``hack/check-examples-k3s.sh``, self-tested by
   ``hack/test-check-examples-k3s.sh``) fails the build if the contract
-  regresses — the failure mode is otherwise silent.
+  regresses across all four inventories — the failure mode is otherwise
+  silent.
 
 
 v1.4.0

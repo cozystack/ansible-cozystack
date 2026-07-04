@@ -2,14 +2,17 @@
 # CI inventory: runs on the GitHub Actions Ubuntu runner itself.
 # k3s is installed directly on the runner (no containers/VMs).
 #
-# This inventory is used ONLY via the chained examples/ubuntu/site.yml run
-# (ansible-playbook examples/ubuntu/site.yml --inventory tests/ci-inventory.yml).
-# It deliberately omits a static k3s_cluster group and the cozystack k3s
-# flags: the k3s_cluster group is created by the group_by task in
-# prepare-ubuntu.yml, and extra_server_args / server_config_yaml are loaded
-# from examples/ubuntu/group_vars/all.yml (playbook-adjacent group_vars) —
-# both within the same ansible-playbook process. Do not run this inventory
-# against a standalone k3s.orchestration.site invocation.
+# The Cozystack-tuned k3s flags live in this inventory's `vars:` block
+# (inventory scope), NOT in a playbook-adjacent group_vars/all.yml. This is
+# required for correctness, not convenience: the inventory is external to
+# examples/ubuntu/, so examples/ubuntu/group_vars/all.yml would load only as
+# playbook-adjacent group_vars, which are scoped to the top-level playbook
+# and are NOT applied to the `import_playbook: k3s.orchestration.site` that
+# lives in the collection directory — the k3s flags would silently vanish and
+# k3s would come up with upstream defaults. Inventory vars are global across
+# every play, so they reach the imported k3s role. The k3s_cluster group is
+# created by the group_by task in prepare-ubuntu.yml on the chained
+# site.yml path.
 cluster:
   children:
     server:
@@ -28,6 +31,27 @@ cluster:
     token: "ci-test-token"
     api_endpoint: "127.0.0.1"
     cluster_context: ci-test
+
+    # Cozystack-tuned k3s configuration consumed by k3s.orchestration. Kept in
+    # sync with examples/*/inventory.yml (see hack/check-examples-k3s.sh). No
+    # cozystack_k3s_extra_args here — CI needs no extra --tls-san.
+    cozystack_k3s_server_args: >-
+      --disable=traefik
+      --disable=servicelb
+      --disable=local-storage
+      --disable=metrics-server
+      --disable-network-policy
+      --disable-kube-proxy
+      --flannel-backend=none
+      --cluster-domain=cozy.local
+      --kubelet-arg=max-pods=220
+    cozystack_k3s_server_config_yaml: |
+      cluster-cidr: 10.42.0.0/16
+      service-cidr: 10.43.0.0/16
+    extra_server_args: >-
+      {{ cozystack_k3s_server_args }}
+      {{ cozystack_k3s_extra_args | default("") }}
+    server_config_yaml: "{{ cozystack_k3s_server_config_yaml }}"
 
     # Cozystack configuration
     cozystack_api_server_host: "127.0.0.1"
