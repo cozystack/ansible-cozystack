@@ -678,6 +678,33 @@
              else '' }}
       when: cozystack_enable_kubevirt | default(true) | bool
 
+    # CVE-2026-53359 (Januscape): the KVM guest-to-host escape requires nested
+    # virtualization exposed to the guest. Cozystack VMs never need nested virt,
+    # so disable it on the host. Written BEFORE the kvm_* module is loaded below
+    # so the parameter takes effect on load (mirrors the DRBD modprobe.d ordering
+    # above). On a host where kvm_intel/kvm_amd is already loaded, a reboot -- or
+    # `modprobe -r kvm_intel kvm_amd && modprobe <vendor-module>` -- is required
+    # to apply. Set cozystack_disable_kvm_nested=false to opt out.
+    - name: Disable KVM nested virtualization (CVE-2026-53359 mitigation)
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/cozystack-kvm-nested.conf
+        mode: "0644"
+        content: |
+          # CVE-2026-53359: disable KVM nested virtualization (guest-to-host escape mitigation)
+          options kvm_intel nested=0
+          options kvm_amd nested=0
+      when:
+        - cozystack_enable_kubevirt | default(true) | bool
+        - cozystack_disable_kvm_nested | default(true) | bool
+
+    - name: Remove KVM nested-virt drop-in when not active
+      ansible.builtin.file:
+        path: /etc/modprobe.d/cozystack-kvm-nested.conf
+        state: absent
+      when: >-
+        not (cozystack_enable_kubevirt | default(true) | bool) or
+        not (cozystack_disable_kvm_nested | default(true) | bool)
+
     # Required KubeVirt modules must load; if vhost_net or tun is unavailable
     # (custom/stripped kernel) the playbook fails here rather than proceed.
     - name: Load required KubeVirt kernel modules now
