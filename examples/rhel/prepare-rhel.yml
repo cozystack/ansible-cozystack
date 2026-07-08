@@ -528,6 +528,45 @@
         - cozystack_enable_kubevirt | default(true) | bool
         - (_cozystack_kvm_module | default('')) | length > 0
 
+    # The modprobe.d drop-in above only takes effect when the kvm_*
+    # module is (re)loaded. On a host where the module was already
+    # loaded at boot (the common case — the kernel autoloads it on
+    # KVM-capable CPUs) the best-effort modprobe above is a no-op and
+    # nested keeps its boot value. Read the effective state back from
+    # sysfs so a still-enabled nested is surfaced, not silently deferred
+    # to the next reboot. Only the CPU vendor's module exposes the file,
+    # so this is gated on _cozystack_kvm_module_stat and never reads a
+    # path that is absent. Read-only on purpose: we do NOT `modprobe -r`
+    # the module, which could disrupt a host whose /dev/kvm is in use.
+    - name: Read back the effective KVM nested-virt state from sysfs
+      ansible.builtin.slurp:
+        src: "/sys/module/{{ _cozystack_kvm_module }}/parameters/nested"
+      register: _cozystack_kvm_nested_state
+      failed_when: false
+      when:
+        - cozystack_enable_kubevirt | default(true) | bool
+        - cozystack_disable_kvm_nested | default(true) | bool
+        - (_cozystack_kvm_module | default('')) | length > 0
+        - _cozystack_kvm_module_stat is defined
+        - _cozystack_kvm_module_stat.stat.exists | default(false)
+
+    - name: Warn that a reboot is required to apply the KVM nested-virt mitigation
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: the CVE-2026-53359 mitigation drop-in
+          (/etc/modprobe.d/cozystack-kvm-nested.conf) is written, but
+          {{ _cozystack_kvm_module }} is already loaded with nested
+          virtualization ENABLED. A running kvm module cannot be
+          re-parameterised while /dev/kvm may be in use, so the mitigation
+          is NOT active yet. Reboot the host -- or, when no VMs are
+          running, `modprobe -r {{ _cozystack_kvm_module }} && modprobe
+          {{ _cozystack_kvm_module }}` -- to apply nested=0.
+      when:
+        - cozystack_enable_kubevirt | default(true) | bool
+        - cozystack_disable_kvm_nested | default(true) | bool
+        - _cozystack_kvm_nested_state.content is defined
+        - (_cozystack_kvm_nested_state.content | b64decode | trim) in ['Y', '1']
+
     - name: Persist KubeVirt kernel modules for boot
       ansible.builtin.copy:
         dest: /etc/modules-load.d/cozystack-kubevirt.conf
