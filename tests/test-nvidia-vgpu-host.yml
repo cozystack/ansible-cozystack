@@ -1,0 +1,342 @@
+---
+# Applies the nvidia_vgpu_host role on a host with no NVIDIA GPU, which
+# is the state of a CI runner, and checks the artifacts it installs plus
+# every refusal path the restore script can take there. The no-op
+# behaviour is the point: this hardware is exactly what the role must not
+# act on.
+#
+# Everything this play fakes lives under a temporary directory. The role
+# exposes the driver paths as variables, so the play never writes to
+# /usr/lib/nvidia or /run/nvidia and is safe to run on a host that has
+# the real vGPU driver installed. Only the role's own artifacts, the unit
+# and its script, land in their real locations.
+#
+# Run with become; the role installs into /usr/local/sbin and
+# /etc/systemd/system.
+
+- name: Verify the NVIDIA vGPU host restore unit and its no-op paths
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  vars:
+    _tmp: /tmp/cozystack-vgpu-host-test
+    _fake_host_driver: /tmp/cozystack-vgpu-host-test/usr/lib/nvidia/sriov-manage
+    _fake_operator_root: /tmp/cozystack-vgpu-host-test/run/nvidia/driver
+    _fake_operator_driver: /tmp/cozystack-vgpu-host-test/run/nvidia/driver/usr/lib/nvidia/sriov-manage
+    _script: /usr/local/sbin/cozystack-nvidia-vgpu-restore
+    _unit: /etc/systemd/system/cozystack-nvidia-vgpu-restore.service
+    cozystack_enable_nvidia_vgpu_host: true
+    cozystack_nvidia_vgpu_sriov_manage: /tmp/cozystack-vgpu-host-test/usr/lib/nvidia/sriov-manage
+    cozystack_nvidia_vgpu_operator_driver_root: /tmp/cozystack-vgpu-host-test/run/nvidia/driver
+    cozystack_nvidia_vgpu_devices:
+      - address: "0000:41:00.0"
+        sriov: true
+        mig: true
+        vgpu_profile: 1155
+        vgpu_profiles:
+          "0000:41:00.5": 1160
+      - address: "GPU-12345678-1234-1234-1234-123456789abc"
+        sriov: true
+
+  tasks:
+    - name: Start from a clean temporary tree
+      ansible.builtin.file:
+        path: "{{ _tmp }}"
+        state: absent
+
+    - name: Apply the role
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+
+    - name: Read back the rendered script
+      ansible.builtin.slurp:
+        src: "{{ _script }}"
+      register: _rendered_script
+
+    - name: Read back the rendered unit
+      ansible.builtin.slurp:
+        src: "{{ _unit }}"
+      register: _rendered_unit
+
+    - name: Set rendered content facts
+      ansible.builtin.set_fact:
+        _script_text: "{{ _rendered_script.content | b64decode }}"
+        _unit_text: "{{ _rendered_unit.content | b64decode }}"
+
+    - name: Assert the script never resets a GPU
+      ansible.builtin.assert:
+        that:
+          - "'--gpu-reset' not in _script_text"
+        fail_msg: >-
+          The rendered script contains a GPU reset. Boot-time restoration
+          never needs one, and a reset takes down every consumer of the
+          card.
+
+    - name: Assert declared GPUs are addressed individually
+      ansible.builtin.assert:
+        that:
+          - "'-e ALL' not in _script_text"
+          - "'ensure_vfs 0000:41:00.0' in _script_text"
+          - "'ensure_mig_mode 0000:41:00.0' in _script_text"
+          - "'ensure_vf_profiles 0000:41:00.0 1155' in _script_text"
+          - "\"['0000:41:00.0|0000:41:00.5']=1160\" in _script_text"
+        fail_msg: >-
+          The script must act on the GPUs named in
+          cozystack_nvidia_vgpu_devices and on no others, and per-VF
+          overrides must be keyed by the physical function they were
+          declared under.
+
+    - name: Assert a GPU without the mig flag never reaches the MIG stage
+      ansible.builtin.assert:
+        that:
+          - "'ensure_mig_mode GPU-12345678' not in _script_text"
+          - "'ensure_vfs GPU-12345678' in _script_text"
+        fail_msg: >-
+          The second device sets sriov but not mig, so it must produce an
+          ensure_vfs call and no ensure_mig_mode call. Each flag gates
+          its own stage independently.
+
+    # The calls, not the comments that label the stages: the comments
+    # could stay in place while the calls moved.
+    - name: Assert the generated calls run MIG mode before virtual functions
+      ansible.builtin.assert:
+        that:
+          - >-
+            _script_text.find('ensure_mig_mode 0000:41:00.0')
+            < _script_text.find('ensure_vfs 0000:41:00.0')
+          - >-
+            _script_text.find('ensure_vfs 0000:41:00.0')
+            < _script_text.find('ensure_vf_profiles 0000:41:00.0')
+        fail_msg: >-
+          Generated call order is wrong. MIG mode is a whole-GPU property
+          that settles before the GPU is subdivided, and a profile cannot
+          be written to a function that does not exist yet.
+
+    - name: Assert the unit skips where no host driver is installed
+      ansible.builtin.assert:
+        that:
+          - "'ConditionPathExists=' + cozystack_nvidia_vgpu_sriov_manage in _unit_text"
+          - "'After=nvidia-vgpud.service nvidia-vgpu-mgr.service' in _unit_text"
+          - "'Requires=' not in _unit_text"
+        fail_msg: >-
+          The unit must carry the host-driver condition, order after the
+          driver's own daemons, and require nothing.
+
+    - name: Check the rendered script parses
+      ansible.builtin.command:
+        cmd: "bash -n {{ _script }}"
+      changed_when: false
+
+    # Presence is proven by the run itself. `command -v shellcheck` looks
+    # portable but is not: `command` is a shell builtin, this module
+    # execs directly without a shell, and Ubuntu ships no /usr/bin/command.
+    - name: Require shellcheck
+      ansible.builtin.command:
+        cmd: shellcheck --version
+      changed_when: false
+
+    - name: Lint the rendered script
+      ansible.builtin.command:
+        cmd: "shellcheck --shell=bash {{ _script }}"
+      changed_when: false
+
+    - name: Verify the rendered unit
+      ansible.builtin.command:
+        cmd: "systemd-analyze verify {{ _unit }}"
+      changed_when: false
+
+    # With no host driver present the unit's condition fails, so systemd
+    # reports the start as successful and leaves the unit inactive. That
+    # is the difference between skipped and failed, and it is what keeps
+    # a GPU-less node's boot clean.
+    #
+    # A condition-skipped oneshot stays inactive, which the systemd
+    # module reports as a failure to start. Tolerated because the skip is
+    # the expected outcome and the next task is what judges it; nothing
+    # downstream reads this task's registered result.
+    - name: Start the unit on hardware it is not meant for
+      ansible.builtin.systemd:
+        name: cozystack-nvidia-vgpu-restore.service
+        state: started
+      failed_when: false
+
+    - name: Read the unit's condition result
+      ansible.builtin.systemd:
+        name: cozystack-nvidia-vgpu-restore.service
+      register: _unit_state
+      changed_when: false
+
+    - name: Assert the unit was skipped by its condition, not failed
+      ansible.builtin.assert:
+        that:
+          - _unit_state.status.ConditionResult == 'no'
+          - _unit_state.status.ActiveState != 'failed'
+        fail_msg: >-
+          Expected the unit to be skipped by ConditionPathExists on a
+          host with no NVIDIA driver. Got
+          ConditionResult={{ _unit_state.status.ConditionResult
+          | default('<absent>') }},
+          ActiveState={{ _unit_state.status.ActiveState
+          | default('<absent>') }}
+
+    - name: Run the script directly with no host driver present
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      register: _no_driver
+      changed_when: false
+
+    - name: Assert the script declines and exits zero with no host driver
+      ansible.builtin.assert:
+        that:
+          - _no_driver.rc == 0
+          - "'no host-installed vGPU driver' in _no_driver.stdout"
+        fail_msg: >-
+          With no host driver the script must log why it is doing nothing
+          and exit zero. Got rc={{ _no_driver.rc }},
+          stdout={{ _no_driver.stdout }}
+
+    # Both a host-installed driver and an operator-managed driver root
+    # present at once leaves GPU ownership undecidable. The script must
+    # decline every stage rather than pick one.
+    - name: Create the directories the fake driver roots live in
+      ansible.builtin.file:
+        path: "{{ item | dirname }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ _fake_host_driver }}"
+        - "{{ _fake_operator_driver }}"
+
+    - name: Plant a fake host driver and a fake operator driver root
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: |
+          #!/bin/sh
+          exit 0
+        mode: "0755"
+      loop:
+        - "{{ _fake_host_driver }}"
+        - "{{ _fake_operator_driver }}"
+
+    - name: Run the script with ambiguous GPU ownership
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      register: _ambiguous
+      changed_when: false
+
+    - name: Assert the script declines on ambiguous ownership
+      ansible.builtin.assert:
+        that:
+          - _ambiguous.rc == 0
+          - "'ownership is ambiguous' in _ambiguous.stdout"
+        fail_msg: >-
+          With both driver roots present the script must decline every
+          stage and exit zero. Got rc={{ _ambiguous.rc }},
+          stdout={{ _ambiguous.stdout }}
+
+    - name: Remove the fake operator driver root
+      ansible.builtin.file:
+        path: "{{ _fake_operator_root }}"
+        state: absent
+
+    # A host driver present but no usable driver is the one precondition
+    # that fails the unit rather than skipping quietly: the operator
+    # declared GPUs on this host and has to learn the driver is broken.
+    - name: Re-render the script with a short driver wait
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_wait_seconds: 3
+
+    - name: Run the script with a host driver but no usable GPU
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      register: _no_gpu
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the driver wait is a hard failure
+      ansible.builtin.assert:
+        that:
+          - _no_gpu.rc == 1
+          - "'did not enumerate a GPU' in _no_gpu.stdout"
+        fail_msg: >-
+          A host driver that never becomes usable must fail the unit, not
+          skip. Got rc={{ _no_gpu.rc }}, stdout={{ _no_gpu.stdout }}
+
+    # An enabled role with nothing declared must not look at the hardware
+    # at all. The fake host driver is still in place, so the
+    # driver-present precondition would pass; the script has to exit
+    # before reaching the wait that just failed above.
+    - name: Re-render the script with no declared work
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_wait_seconds: 3
+        cozystack_nvidia_vgpu_devices: []
+
+    - name: Run the script with nothing declared
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      register: _no_work
+      changed_when: false
+
+    - name: Assert nothing declared means nothing is touched
+      ansible.builtin.assert:
+        that:
+          - _no_work.rc == 0
+          - "'no GPUs declared' in _no_work.stdout"
+          - "'did not enumerate a GPU' not in _no_work.stdout"
+        fail_msg: >-
+          With no work declared the script must exit zero before any
+          precondition, including the driver wait. Got
+          rc={{ _no_work.rc }}, stdout={{ _no_work.stdout }}
+
+    - name: Re-apply the role with the original variables
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+
+    - name: Read back the re-rendered script
+      ansible.builtin.slurp:
+        src: "{{ _script }}"
+      register: _rerendered_script
+
+    # Rendering the per-VF override map iterates a dict, so a change that
+    # let that ordering vary would rewrite the script on every run.
+    - name: Assert the render is deterministic
+      ansible.builtin.assert:
+        that:
+          - (_rerendered_script.content | b64decode) == _script_text
+        fail_msg: >-
+          Re-applying the role with unchanged variables produced a
+          different script, so every run would rewrite it.
+
+    # Turning the toggle off has to undo a previous run, or a host that
+    # was enabled once keeps changing GPU state at every boot.
+    - name: Apply the role with the toggle turned off
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_enable_nvidia_vgpu_host: false
+
+    - name: Check the installed paths after disabling
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _after_disable
+      loop:
+        - "{{ _script }}"
+        - "{{ _unit }}"
+
+    - name: Assert disabling the role removed what it installed
+      ansible.builtin.assert:
+        that:
+          - _after_disable.results | map(attribute='stat.exists') | select | list | length == 0
+        fail_msg: >-
+          Disabling the role left its unit or script in place, so the
+          host no longer matches the toggle.
+
+    - name: Remove the temporary tree
+      ansible.builtin.file:
+        path: "{{ _tmp }}"
+        state: absent

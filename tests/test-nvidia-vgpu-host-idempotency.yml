@@ -1,0 +1,28 @@
+---
+# Applies the role and nothing else, so a second run of this playbook
+# reports changed=0 if the role settles. Kept separate from
+# test-nvidia-vgpu-host.yml, which deliberately mutates host state to
+# exercise the script's refusal paths and therefore reports changes on
+# every run.
+
+- name: Apply the NVIDIA vGPU host role and nothing else
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  vars:
+    cozystack_enable_nvidia_vgpu_host: true
+    cozystack_nvidia_vgpu_devices:
+      - address: "0000:41:00.0"
+        sriov: true
+        mig: true
+        vgpu_profile: 1155
+        vgpu_profiles:
+          "0000:41:00.5": 1160
+      - address: "GPU-12345678-1234-1234-1234-123456789abc"
+        sriov: true
+
+  tasks:
+    - name: Apply the role
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host

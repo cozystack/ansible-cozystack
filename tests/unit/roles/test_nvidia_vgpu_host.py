@@ -301,7 +301,7 @@ def test_unit_skips_when_no_host_installed_driver_is_present():
         "sriov-manage. That path is absent both on a host with no NVIDIA "
         "driver and on one where gpu-operator manages the vGPU Manager "
         "(its driver root lives elsewhere), so the condition is what "
-        "makes the unit a no-op there — reported as skipped, not failed."
+        "makes the unit a no-op there, reported as skipped, not failed."
     )
     assert any("sriov" in value for value in conditions), (
         "the ConditionPathExists must point at sriov-manage, found %r"
