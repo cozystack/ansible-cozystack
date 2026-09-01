@@ -1,0 +1,54 @@
+---
+# Install a boot unit that restores vGPU-relevant GPU state on hosts
+# where the NVIDIA vGPU host driver is installed directly. Off by
+# default. Enabling it is not sufficient on its own: the unit still
+# declines to act unless its preconditions hold, and it touches only
+# GPUs named in cozystack_nvidia_vgpu_devices.
+cozystack_enable_nvidia_vgpu_host: false
+
+# Which GPUs the boot unit may touch, and what it may do to each.
+# Empty means the unit is installed but inert. Nothing is derived from
+# the hardware: a card that is not named here is never touched,
+# whatever its PCI capabilities advertise.
+#
+# A card sliced uniformly:
+#
+#   cozystack_nvidia_vgpu_devices:
+#     - address: "0000:41:00.0"     # PF PCI address, or GPU-<uuid>
+#       sriov: true                 # create virtual functions on this PF
+#       vgpu_profile: 1155          # the same profile on every VF
+#
+# A card whose functions differ, one entry per function:
+#
+#   cozystack_nvidia_vgpu_devices:
+#     - address: "0000:41:00.0"
+#       sriov: true
+#       vgpu_profiles:
+#         "0000:41:00.4": 1155
+#         "0000:41:00.5": 1160
+#
+# Setting both forms on one card needs driver and GPU support for
+# heterogeneous types on a single device. Every entry must ask for
+# something: sriov or mig set to true, a vgpu_profile, or a non-empty
+# vgpu_profiles. An address on its own is rejected rather than ignored.
+cozystack_nvidia_vgpu_devices: []
+
+# How long the unit waits for nvidia-smi to enumerate GPUs before it
+# gives up. The driver's own units may still be starting at that point,
+# and sriov-manage is known to race driver binding.
+cozystack_nvidia_vgpu_wait_seconds: 120
+
+# Where the vGPU host driver installs sriov-manage. Also the unit's
+# ConditionPathExists: absent means either no host-installed driver or a
+# gpu-operator-managed vGPU Manager, and the unit skips.
+cozystack_nvidia_vgpu_sriov_manage: /usr/lib/nvidia/sriov-manage
+
+# Driver root that gpu-operator's driver container mounts on the host.
+# Present at the same time as a host-installed driver leaves ownership
+# of the GPUs ambiguous, and the unit declines rather than guess.
+cozystack_nvidia_vgpu_operator_driver_root: /run/nvidia/driver
+
+# Where the unit looks up PCI devices. There is no reason to change this
+# on a real host; it exists so the boot script's stages can be exercised
+# against a fake device tree in tests instead of only on GPU hardware.
+cozystack_nvidia_vgpu_pci_root: /sys/bus/pci/devices

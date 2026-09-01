@@ -1,0 +1,492 @@
+#!/usr/bin/env bash
+# Rendered by the nvidia_vgpu_host role. Edit the role, not this file.
+#
+# Restores the vGPU-relevant GPU state that a reboot drops on a host
+# where the NVIDIA vGPU host driver is installed directly: SR-IOV
+# virtual functions, MIG mode, and per-VF vGPU profiles. Acts only on
+# the GPUs the operator named, and declines rather than guess whenever a
+# precondition is not decidable.
+#
+# Virtual functions are documented as not surviving a reboot: "The
+# virtual functions for the physical GPU in the sysfs file system are
+# disabled after the hypervisor host is rebooted or if the driver is
+# reloaded or upgraded", Virtual GPU Software User Guide, "Preparing the
+# Virtual Function for an NVIDIA vGPU that Supports SR-IOV on a Linux
+# with KVM Hypervisor". The same section requires the administrator to
+# create them with sriov-manage and no other means.
+#
+# shellcheck disable=SC2317,SC2329
+# Helpers and stage functions are emitted unconditionally while the calls
+# to them are emitted per declared flag, so on any configuration that
+# does not use every stage some functions are genuinely never invoked and
+# some code is genuinely unreachable. Both notices are artifacts of that
+# rendering, not defects, and suppressing them here keeps the lint gate
+# meaningful for every device shape rather than only the fullest one.
+{% set mig_devices = cozystack_nvidia_vgpu_devices | selectattr('mig', 'defined') | selectattr('mig') | list %}
+{% set sriov_devices = cozystack_nvidia_vgpu_devices | selectattr('sriov', 'defined') | selectattr('sriov') | list %}
+{% set profile_devices = cozystack_nvidia_vgpu_devices | selectattr('vgpu_profile', 'defined') | list %}
+{% set override_devices = cozystack_nvidia_vgpu_devices | selectattr('vgpu_profiles', 'defined') | selectattr('vgpu_profiles') | rejectattr('vgpu_profile', 'defined') | list %}
+{% set profile_all = profile_devices + override_devices %}
+
+set -euo pipefail
+
+readonly SRIOV_MANAGE={{ cozystack_nvidia_vgpu_sriov_manage | quote }}
+readonly OPERATOR_DRIVER_ROOT={{ cozystack_nvidia_vgpu_operator_driver_root | quote }}
+readonly WAIT_SECONDS={{ cozystack_nvidia_vgpu_wait_seconds | int }}
+readonly PCI_ROOT={{ cozystack_nvidia_vgpu_pci_root | quote }}
+
+# NVML defines exactly two host vGPU modes, NVML_HOST_VGPU_MODE_SRIOV and
+# NVML_HOST_VGPU_MODE_NON_SRIOV, which nvidia-smi prints as "SR-IOV" and
+# "Non SR-IOV". Compared for equality, never by substring: "Non SR-IOV"
+# contains "SR-IOV".
+readonly SRIOV_MODE="SR-IOV"
+
+# sriov-manage is documented to fail while the Virtual GPU Manager is
+# still initialising ("NVRM: Timeout occurred in event processing by
+# vgpu_mgr daemon" on NVLink systems), so the call is retried. NVIDIA's
+# own driver container retries the same call for the same reason.
+readonly SRIOV_RETRIES=5
+readonly RETRY_SLEEP=3
+
+# Set when work the operator explicitly declared could not be completed.
+# That includes a declared GPU that is not present on this host: the
+# operator named a card, the card is not here, and the state it asked
+# for was not restored. Copying the README's example address without
+# editing it lands exactly there, and a green unit would be the wrong
+# answer. Preconditions do not set it: not acting is a valid outcome,
+# failing to do declared work is not. Every stage function returns 0 regardless, so
+# a failure travels in this variable and never in the exit status of a
+# bare top-level call, where it would end the run under errexit before
+# the remaining GPUs were touched.
+declare -i FAILED=0
+
+# Deadline shared by every wait in the profile stage, set on first use.
+declare -i PROFILE_WAIT_DEADLINE=0
+
+# Keyed "<PF>|<VF>" so an override declared under one physical function
+# can never reach another's virtual functions. Rendered with the
+# addresses exactly as the operator wrote them and re-keyed below
+# through normalise_bdf, so a lookup matches whichever equivalent
+# PCI-address spelling was used.
+declare -A VF_PROFILE_OVERRIDE_DECLARED=(
+{% for device in cozystack_nvidia_vgpu_devices %}
+{% for vf, profile in (device.vgpu_profiles | default({})).items() %}
+  [{{ ((device.address | lower) ~ '|' ~ (vf | lower)) | quote }}]={{ profile | int | string | quote }}
+{% endfor %}
+{% endfor %}
+)
+declare -A VF_PROFILE_OVERRIDE=()
+
+# How many per-VF overrides the operator declared for each physical
+# function. Compared against how many actually matched a function, so an
+# override naming a VF that does not belong to this PF is reported
+# instead of silently doing nothing.
+declare -A VF_OVERRIDE_COUNT_DECLARED=(
+{% for device in cozystack_nvidia_vgpu_devices if (device.vgpu_profiles | default({})) | length > 0 %}
+  [{{ (device.address | lower) | quote }}]={{ device.vgpu_profiles | length }}
+{% endfor %}
+)
+declare -A VF_OVERRIDE_COUNT=()
+
+# GPUs the virtual-function stage declined because the driver does not
+# report SR-IOV mode. The profile stage stays quiet about those rather
+# than failing the unit for a card it was already told to leave alone.
+declare -A VF_STAGE_DECLINED=()
+
+# Every printf tail below carries `|| true`. A failed write to the
+# journal would otherwise return non-zero from the function, and under
+# errexit a bare `log ...` call would end the run at the exact moment it
+# was trying to explain itself.
+log() {
+  printf 'cozystack-nvidia-vgpu-restore: %s\n' "$*" || true
+}
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  printf '%s' "${value%"${value##*[![:space:]]}"}" || true
+}
+
+# Rewrites any spelling of a PCI address to the four-digit-domain form
+# sysfs uses, so operator-written addresses, nvidia-smi's eight-digit
+# output and sysfs names compare equal. The domain is canonicalised, not
+# discarded: on a host with more than one PCI segment, 0000:41:00.0 and
+# 0001:41:00.0 are different cards, and collapsing them would let the
+# script act on hardware nobody declared. A GPU UUID has no domain and
+# is only lowercased.
+normalise_bdf() {
+  local value="${1,,}"
+  if [[ "$value" =~ ^([0-9a-f]+):([0-9a-f]{2}:[0-9a-f]{2}\.[0-7])$ ]]; then
+    printf '%04x:%s' "$((16#${BASH_REMATCH[1]}))" "${BASH_REMATCH[2]}" || true
+    return 0
+  fi
+  if [[ "$value" =~ ^[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]]; then
+    printf '0000:%s' "$value" || true
+    return 0
+  fi
+  printf '%s' "$value" || true
+}
+
+# Re-keyed through normalise_bdf so the rendered keys and the runtime
+# lookups go through one normaliser rather than two that can drift
+# apart. Keys are "<PF>|<VF>", and both halves are normalised here.
+# Iterating the keys of an empty associative array is safe under set -u
+# from bash 4.4, which every distro this collection supports ships.
+# Do not reduce this to a length test: the template renderer reads a
+# literal ${ followed by # as the start of a Jinja comment.
+for declared_key in "${!VF_PROFILE_OVERRIDE_DECLARED[@]}"; do
+  VF_PROFILE_OVERRIDE["$(normalise_bdf "${declared_key%%|*}")|$(normalise_bdf "${declared_key##*|}")"]="${VF_PROFILE_OVERRIDE_DECLARED[$declared_key]}"
+done
+
+for declared_pf in "${!VF_OVERRIDE_COUNT_DECLARED[@]}"; do
+  VF_OVERRIDE_COUNT["$(normalise_bdf "$declared_pf")"]="${VF_OVERRIDE_COUNT_DECLARED[$declared_pf]}"
+done
+
+# Maps a declared PCI address or GPU UUID onto the index nvidia-smi -i
+# wants, plus the bus id as nvidia-smi spells it. Indices are never
+# accepted from configuration because they shift on re-enumeration, but
+# nvidia-smi still needs one, so it is resolved here at every boot.
+resolve_gpu() {
+  local want="${1,,}" want_bdf index bus uuid
+  want_bdf="$(normalise_bdf "$want")"
+  while IFS=, read -r index bus uuid; do
+    index="$(trim "$index")"
+    bus="$(trim "$bus")"
+    uuid="$(trim "$uuid")"
+    if [ "${uuid,,}" = "$want" ] || [ "$(normalise_bdf "$bus")" = "$want_bdf" ]; then
+      # Trailing newline is load-bearing: callers consume this with
+      # `read`, which reports failure on EOF without one even after it
+      # has set the variables.
+      printf '%s %s\n' "$index" "$bus"
+      return 0
+    fi
+  done < <(nvidia-smi --query-gpu=index,pci.bus_id,uuid --format=csv,noheader 2>/dev/null)
+  return 1
+}
+
+sysfs_for_bdf() {
+  local want device
+  want="$(normalise_bdf "$1")"
+  for device in "${PCI_ROOT}"/*; do
+    [ -e "$device" ] || continue
+    if [ "$(normalise_bdf "$(basename "$device")")" = "$want" ]; then
+      printf '%s' "$device"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Bounded, and deliberately short: this closes the population race, it
+# does not wait for hardware that is never coming. Returns non-zero when
+# the node never appears, so every caller must guard the call; a bare
+# call would end the whole run under errexit.
+wait_for_vgpu_node() {
+  local node="$1" attempt
+  [ -e "$node" ] && return 0
+  # One budget per card, not one per function. A card exposes as many
+  # functions as the driver created, so a per-function wait multiplies by
+  # a number this script does not choose and cannot bound. The card count
+  # is the operator's, and the unit's TimeoutStartSec already scales with
+  # it. The caller resets this for each card.
+  if [ "$PROFILE_WAIT_DEADLINE" -eq 0 ]; then
+    PROFILE_WAIT_DEADLINE=$((SECONDS + SRIOV_RETRIES * RETRY_SLEEP))
+  fi
+  for attempt in $(seq 1 "$SRIOV_RETRIES"); do
+    [ -e "$node" ] && return 0
+    [ "$SECONDS" -ge "$PROFILE_WAIT_DEADLINE" ] && return 1
+    sleep "$RETRY_SLEEP"
+  done
+  [ -e "$node" ]
+}
+
+host_vgpu_mode() {
+  nvidia-smi -q -i "$1" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*Host VGPU Mode[[:space:]]*:[[:space:]]*//p' \
+    | head -n 1 \
+    | tr -d '\r'
+}
+
+{% if not (mig_devices or sriov_devices or profile_all) %}
+# Nothing was declared, so there is no work and no reason to look at the
+# hardware at all. Rendered before the preconditions on purpose: the
+# driver wait below is a hard failure, and an inert configuration must
+# never reach it. Validation requires every entry to ask for something,
+# so this branch is reached through an empty device list.
+log "no GPUs declared in cozystack_nvidia_vgpu_devices; nothing to restore"
+exit 0
+{% endif %}
+
+# ---- preconditions ----
+
+# No host-installed vGPU driver. Also the state on a host with no NVIDIA
+# GPU at all, and on one where gpu-operator manages the vGPU Manager: the
+# container's driver root holds the driver and its entrypoint enables the
+# virtual functions itself. The unit carries the same check as
+# ConditionPathExists, so normally systemd skips it before this runs.
+if [ ! -x "$SRIOV_MANAGE" ]; then
+  log "no host-installed vGPU driver at ${SRIOV_MANAGE}; nothing to restore"
+  exit 0
+fi
+
+# A host-installed driver and an operator-managed driver root at the same
+# time leaves it undecidable which one owns the GPUs. Declining covers
+# the MIG stage too, not only the VF stage: enabling MIG mode does not
+# race the container's VF setup, but it would change hardware state
+# underneath whatever the operand had already built.
+if [ -x "${OPERATOR_DRIVER_ROOT}/usr/lib/nvidia/sriov-manage" ]; then
+  log "refusing to act: a host-installed driver at ${SRIOV_MANAGE} and an operator-managed driver root at ${OPERATOR_DRIVER_ROOT} are both present, so GPU ownership is ambiguous"
+  exit 0
+fi
+
+# The only precondition that exits non-zero; every other one above
+# treats not acting as a valid outcome. Reaching here already proved a
+# host vGPU driver is installed and the operator named GPUs on this host,
+# so a driver that never becomes usable is a fault the operator has to
+# see rather than a no-op to log quietly.
+deadline=$((SECONDS + WAIT_SECONDS))
+until [ -n "$(nvidia-smi -L 2>/dev/null)" ]; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    log "nvidia-smi did not enumerate a GPU within ${WAIT_SECONDS}s; the driver is installed but not usable"
+    exit 1
+  fi
+  sleep 2
+done
+
+# ---- STAGE 1: MIG mode ----
+#
+# Runs before any virtual function exists. MIG mode is a whole-GPU
+# property and settles before the GPU is subdivided.
+#
+# This stage never resets a GPU. MIG mode is persistent across reboots on
+# Ampere, where setting it needs a reset, and needs no reset on Hopper
+# and later, where it is not persistent, so boot-time restoration never
+# requires one. A reset destroys every consumer of the card, which on a
+# vGPU host means the tenants' running VMs.
+ensure_mig_mode() {
+  local declared="$1" index bus mode output
+  if ! read -r index bus < <(resolve_gpu "$declared"); then
+    log "MIG: ${declared} is not present on this host, so its MIG mode was not restored"
+    FAILED=1
+    return 0
+  fi
+  mode="$(trim "$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader -i "$index" 2>/dev/null || true)")"
+  case "$mode" in
+    Enabled)
+      log "MIG: ${declared} already reports MIG mode Enabled"
+      return 0
+      ;;
+    Disabled) ;;
+    *)
+      log "MIG: ${declared} declined, unrecognised MIG mode; observed mode: '${mode}'. The GPU is not MIG-capable, or the driver reported no mode"
+      return 0
+      ;;
+  esac
+  if ! output="$(nvidia-smi -i "$index" -mig 1 2>&1)"; then
+    log "MIG: enabling MIG mode on ${declared} failed; nvidia-smi said: ${output}"
+    FAILED=1
+    return 0
+  fi
+  mode="$(trim "$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader -i "$index" 2>/dev/null || true)")"
+  if [ "$mode" != "Enabled" ]; then
+    log "MIG: ${declared} still reports '${mode}' after enabling, so a reset or reboot is pending. This script never resets a GPU; do it out of band in a maintenance window. nvidia-smi said: ${output}"
+    FAILED=1
+    return 0
+  fi
+  log "MIG: enabled MIG mode on ${declared}"
+  return 0
+}
+
+# ---- STAGE 2: SR-IOV virtual functions ----
+
+ensure_vfs() {
+  local declared="$1" index bus sysfs canonical mode numvfs output attempt
+  if ! read -r index bus < <(resolve_gpu "$declared"); then
+    log "VF: ${declared} is not present on this host, so its virtual functions were not restored"
+    FAILED=1
+    return 0
+  fi
+  # Ask the driver to state its own operating mode rather than derive
+  # SR-IOV capability from the PCI capability bits. Hardware exists that
+  # advertises virtual functions in sysfs yet drives vGPU through the
+  # legacy mdev path and never creates them, and enabling functions on
+  # such a card can unbind a physical function carrying live vGPUs.
+  mode="$(trim "$(host_vgpu_mode "$index")")"
+  if [ "$mode" != "$SRIOV_MODE" ]; then
+    log "VF: ${declared} declined, host vGPU mode is not SR-IOV or was unrecognised; observed mode: '${mode}'. NVML defines only 'SR-IOV' and 'Non SR-IOV'; an empty value means the driver reported no such field"
+    VF_STAGE_DECLINED["$(normalise_bdf "$declared")"]=1
+    return 0
+  fi
+  if ! sysfs="$(sysfs_for_bdf "$bus")"; then
+    log "VF: no sysfs entry for ${declared} (bus ${bus}), so its virtual functions were not restored"
+    FAILED=1
+    return 0
+  fi
+  # Suppresses a redundant write, and nothing else. It is not capability
+  # inference: a non-zero count means the work is already done, while a
+  # zero count never on its own concludes that functions are missing and
+  # must be created. Only the operator's explicit sriov flag decides
+  # that, and only after the driver confirmed SR-IOV mode above.
+  # sriov-manage has no query form, so sysfs is the only place to read
+  # the current count from.
+  numvfs="$(trim "$(cat "${sysfs}/sriov_numvfs" 2>/dev/null || printf '0')")"
+  if [ "${numvfs:-0}" != "0" ]; then
+    log "VF: ${declared} already has ${numvfs} virtual functions; nothing to do"
+    return 0
+  fi
+  # sriov-manage is documented taking <domain>:<bus>:<slot>.<function>,
+  # the four-digit-domain form sysfs uses. nvidia-smi pads the domain to
+  # eight digits, so pass the sysfs name rather than what nvidia-smi
+  # printed.
+  canonical="$(basename "$sysfs")"
+  for attempt in $(seq 1 "$SRIOV_RETRIES"); do
+    if output="$("$SRIOV_MANAGE" -e "$canonical" 2>&1)"; then
+      # A zero exit is not proof the functions exist: some driver
+      # branches return success even when creation failed, which is why
+      # NVIDIA's own driver container carries a workaround for the same
+      # bug. Confirm against sysfs before reporting success.
+      numvfs="$(trim "$(cat "${sysfs}/sriov_numvfs" 2>/dev/null || printf '0')")"
+      if [ "${numvfs:-0}" != "0" ]; then
+        log "VF: enabled ${numvfs} virtual functions on ${declared}"
+        return 0
+      fi
+      output="sriov-manage reported success but sriov_numvfs is still 0"
+    fi
+    if [ "$attempt" -lt "$SRIOV_RETRIES" ]; then
+      sleep "$RETRY_SLEEP"
+    fi
+  done
+  log "VF: enabling virtual functions on ${declared} failed after ${SRIOV_RETRIES} attempts; sriov-manage said: ${output}"
+  FAILED=1
+  return 0
+}
+
+# ---- STAGE 3: per-VF vGPU profiles ----
+#
+# Runs last, because a virtual function has to exist before its profile
+# can be written. current_vgpu_type resets on PCI re-enumeration, so
+# without this a restored function advertises no profile and no VM can
+# request it.
+ensure_vf_profiles() {
+  local declared="$1" fallback="$2"
+  local bus sysfs prefix virtfn vf_path vf_bdf profile current node
+  local -i explicit=0
+  local -i seen=0 applied_overrides=0 declared_overrides=0
+  # Each card waits on its own budget. Sharing one across cards let the
+  # first card that had to wait spend all of it, after which a function
+  # named by hand on a later card failed for a node that was seconds from
+  # appearing.
+  PROFILE_WAIT_DEADLINE=0
+  if ! read -r _ bus < <(resolve_gpu "$declared"); then
+    log "profile: ${declared} is not present on this host, so no vGPU profile was written"
+    FAILED=1
+    return 0
+  fi
+  if ! sysfs="$(sysfs_for_bdf "$bus")"; then
+    log "profile: no sysfs entry for ${declared} (bus ${bus}), so no vGPU profile was written"
+    FAILED=1
+    return 0
+  fi
+  prefix="$(normalise_bdf "$declared")"
+  declared_overrides="${VF_OVERRIDE_COUNT[$prefix]:-0}"
+  shopt -s nullglob
+  for virtfn in "${sysfs}"/virtfn*; do
+    seen=$((seen + 1))
+    # Unguarded this would abort the whole run under errexit, skipping
+    # every GPU after this one, when a function disappears
+    # mid-enumeration or its symlink cannot be resolved.
+    if ! vf_path="$(readlink -f "$virtfn")"; then
+      log "profile: could not resolve ${virtfn}; skipping"
+      FAILED=1
+      continue
+    fi
+    vf_bdf="$(normalise_bdf "$(basename "$vf_path")")"
+    profile="${VF_PROFILE_OVERRIDE[${prefix}|${vf_bdf}]:-}"
+    if [ -n "$profile" ]; then
+      explicit=1
+      applied_overrides=$((applied_overrides + 1))
+    else
+      explicit=0
+      profile="$fallback"
+    fi
+    [ -n "$profile" ] || continue
+    node="${vf_path}/nvidia/current_vgpu_type"
+    # The driver populates a function's nvidia sysfs group asynchronously
+    # after the function itself appears, and this stage runs immediately
+    # behind the one that created them, so a missing node here is usually
+    # that race rather than a permanent state.
+    # Guarded: the helper returns non-zero when the node never appears,
+    # which is precisely the case the branch below exists to report. An
+    # unguarded call ends the run there instead, with nothing logged and
+    # every later function and GPU skipped.
+    wait_for_vgpu_node "$node" || true
+    if [ ! -w "$node" ]; then
+      if [ "$explicit" -eq 1 ]; then
+        # The operator named this function, so failing to write it is
+        # unapplied declared work.
+        log "profile: ${vf_bdf} was named explicitly but has no writable current_vgpu_type, so vGPU type ${profile} was not applied"
+        FAILED=1
+      else
+        # Swept by the per-PF shorthand rather than named, so a function
+        # that is not vGPU-capable is a legitimate skip.
+        log "profile: ${vf_bdf} has no writable current_vgpu_type after waiting; either the function is not vGPU-capable or the driver never populated its nvidia sysfs group; skipping"
+      fi
+      continue
+    fi
+    current="$(trim "$(cat "$node" 2>/dev/null || printf '0')")"
+    if [ "$current" = "$profile" ]; then
+      continue
+    fi
+    # The subshell catches bash's own redirection error too; a plain
+    # `printf ... 2>/dev/null > file` only silences printf's stderr and
+    # still leaks "No such file or directory" into the journal.
+    if ( printf '%s\n' "$profile" > "$node" ) 2>/dev/null; then
+      log "profile: set vGPU type ${profile} on ${vf_bdf}"
+    elif [ "$explicit" -eq 1 ]; then
+      log "profile: ${vf_bdf} was named explicitly and rejected vGPU type ${profile}"
+      FAILED=1
+    else
+      # The per-PF shorthand is written to every function the card
+      # exposes, and sriov-manage creates the card's maximum count while
+      # a type's instance count is set by frame-buffer division. So the
+      # card runs out of that type partway down the list and rejects the
+      # rest. That is the shorthand working as documented, not a fault,
+      # and failing here would leave the unit red at every boot on the
+      # configuration the README recommends.
+      log "profile: ${vf_bdf} rejected vGPU type ${profile} from the per-PF shorthand, which usually means the card is at that type's instance limit; skipping"
+    fi
+  done
+  shopt -u nullglob
+  if [ "$seen" -eq 0 ]; then
+    if [ -n "${VF_STAGE_DECLINED[$prefix]:-}" ]; then
+      # Already reported once by the virtual-function stage. Failing here
+      # too would give an operator on a legacy mdev card a red unit at
+      # every boot for a card the script was correct to leave alone.
+      log "profile: ${declared} has no virtual functions because its virtual-function stage declined it; nothing to write"
+      return 0
+    fi
+    log "profile: ${declared} has no virtual functions, so no vGPU profile could be written"
+    FAILED=1
+    return 0
+  fi
+  if [ "$applied_overrides" -lt "$declared_overrides" ]; then
+    log "profile: ${declared} declares ${declared_overrides} per-VF overrides but ${applied_overrides} matched a function on this GPU; check those addresses belong to it"
+    FAILED=1
+  fi
+  return 0
+}
+
+{% for device in mig_devices %}
+ensure_mig_mode {{ device.address | quote }}
+{% endfor %}
+{% for device in sriov_devices %}
+ensure_vfs {{ device.address | quote }}
+{% endfor %}
+{% for device in profile_devices %}
+ensure_vf_profiles {{ device.address | quote }} {{ device.vgpu_profile | int | string | quote }}
+{% endfor %}
+{% for device in override_devices %}
+ensure_vf_profiles {{ device.address | quote }} ''
+{% endfor %}
+
+exit "$FAILED"

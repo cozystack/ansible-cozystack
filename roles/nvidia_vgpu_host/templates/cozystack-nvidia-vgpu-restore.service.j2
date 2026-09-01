@@ -1,0 +1,32 @@
+[Unit]
+Description=Restore NVIDIA vGPU host state (SR-IOV virtual functions, MIG mode, vGPU profiles)
+Documentation=https://github.com/cozystack/ansible-cozystack
+
+# Absent on a host with no NVIDIA driver installed, and on a host where
+# gpu-operator manages the vGPU Manager: there the driver root is
+# {{ cozystack_nvidia_vgpu_operator_driver_root }} and the container's
+# own entrypoint enables virtual functions. Systemd reports the unit as
+# skipped on a failed condition, not as failed.
+ConditionPathExists={{ cozystack_nvidia_vgpu_sriov_manage }}
+
+# sriov-manage is documented to fail while the Virtual GPU Manager is
+# still initialising, logging "NVRM: Timeout occurred in event processing
+# by vgpu_mgr daemon" on NVLink systems, so this runs after the driver's
+# own daemons rather than before them. The script also retries, which is
+# what actually closes the race; After= naming a unit that is not
+# installed is a no-op.
+After=nvidia-vgpud.service nvidia-vgpu-mgr.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cozystack-nvidia-vgpu-restore
+# The driver wait, plus a per-card allowance. Both retrying parts are
+# bounded per card: virtual-function creation, and the wait for a
+# function's nvidia sysfs group, which is one budget per card rather than
+# one per function. A fixed margin would run out on a host with several
+# cards and systemd would kill the script before it could log why.
+TimeoutStartSec={{ (cozystack_nvidia_vgpu_wait_seconds | int) + 120 + (cozystack_nvidia_vgpu_devices | length) * 60 }}
+
+[Install]
+WantedBy=multi-user.target
