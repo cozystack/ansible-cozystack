@@ -19,6 +19,19 @@ Unreleased
   IP addresses for ingress-nginx Service ``externalIPs``. Required on
   ``isp-full-generic`` platform variant when nodes lack a native load
   balancer (cloud VMs, bare metal).
+- New role ``cozystack.installer.nvidia_vgpu_host``, opt-in and disabled
+  by default via ``cozystack_enable_nvidia_vgpu_host``. It installs a
+  systemd unit that restores vGPU state at boot on hosts where the NVIDIA
+  vGPU host driver is installed directly on the node. A reboot on such a
+  host disables SR-IOV virtual functions, resets each function's
+  ``current_vgpu_type``, and on Hopper and later loses MIG mode, and
+  nothing on the node puts any of it back. Where gpu-operator manages the
+  vGPU Manager, its container entrypoint already enables the virtual
+  functions and the unit skips that host. The unit acts only on GPUs
+  named in ``cozystack_nvidia_vgpu_devices``, empty by default, addressed
+  by PCI address or GPU UUID rather than by index. It never resets a GPU.
+  Setting ``cozystack_enable_nvidia_vgpu_host`` back to ``false`` and
+  re-running disables the unit and removes it.
 
 Bugfixes
 --------

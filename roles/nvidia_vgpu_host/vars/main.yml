@@ -1,0 +1,15 @@
+---
+# Canonicalisation for PCI addresses, shared by every check that compares
+# them. One definition on purpose: the two duplicate checks previously
+# carried their own regexes, they disagreed about the domain, and the
+# disagreement was invisible because each one looked correct alone.
+#
+# The rule is canonicalise, never delete. Stripping the domain aliases
+# 0000:41:00.0 and 0001:41:00.0 onto one key, and those are different
+# cards on a host with more than one PCI segment. Leading zeros go, a
+# non-zero domain stays, and a bare address is treated as domain zero,
+# which is the same rule normalise_bdf applies in the boot script.
+_cozystack_vgpu_bdf_domain_re: '^0*([0-9a-f]*):([0-9a-f]{2}:[0-9a-f]{2}\.[0-7])$'
+_cozystack_vgpu_bdf_domain_sub: '\1:\2'
+_cozystack_vgpu_bdf_bare_re: '^([0-9a-f]{2}:[0-9a-f]{2}\.[0-7])$'
+_cozystack_vgpu_bdf_bare_sub: ':\1'
