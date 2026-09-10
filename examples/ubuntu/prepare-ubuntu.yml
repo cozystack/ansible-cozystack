@@ -726,3 +726,18 @@
         path: /etc/modules-load.d/cozystack-kubevirt.conf
         state: absent
       when: not (cozystack_enable_kubevirt | default(true) | bool)
+
+    # NVIDIA vGPU host state does not survive a reboot: SR-IOV virtual
+    # functions are dropped, per-VF vGPU profiles reset, and on Hopper
+    # and later MIG mode is lost with them. Where the vGPU host driver
+    # is installed directly on the node, nothing restores any of it.
+    # gpu-operator's vGPU Manager container does, but only on hosts it
+    # manages. Opt in per host group and name the GPUs; see the role's
+    # README section.
+    # Included unconditionally: the role gates both its paths on
+    # cozystack_enable_nvidia_vgpu_host itself, and gating the include
+    # too would make turning the toggle back off unreachable, leaving a
+    # host that was enabled once still restoring GPU state at every boot.
+    - name: Restore NVIDIA vGPU host state across reboots
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host

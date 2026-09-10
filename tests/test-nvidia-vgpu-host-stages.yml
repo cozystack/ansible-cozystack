@@ -1,0 +1,714 @@
+---
+# Runs the restore script's three stages for real against a fake GPU.
+#
+# The other test playbook covers the refusal paths, which is everything
+# the script does on a host with no GPU. That leaves the stages
+# themselves untested, and they are where the consequences live: a wrong
+# argument to sriov-manage, or a profile that silently never gets
+# written, produces a VM that cannot start. Faking nvidia-smi and
+# sriov-manage on PATH and pointing the script at a fake PCI tree
+# exercises them on any runner.
+#
+# Everything lives under a temporary directory, including the driver
+# paths and the PCI root, so this is safe on a host that has the real
+# vGPU driver installed.
+
+- name: Exercise the restore script's stages against a fake GPU
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  vars:
+    _tmp: /tmp/cozystack-vgpu-stage-test
+    _bin: /tmp/cozystack-vgpu-stage-test/bin
+    _pci: /tmp/cozystack-vgpu-stage-test/pci
+    _pf: /tmp/cozystack-vgpu-stage-test/pci/0000:41:00.0
+    _script: /usr/local/sbin/cozystack-nvidia-vgpu-restore
+    _uuid: GPU-12345678-1234-1234-1234-123456789abc
+    cozystack_enable_nvidia_vgpu_host: true
+    cozystack_nvidia_vgpu_sriov_manage: /tmp/cozystack-vgpu-stage-test/bin/sriov-manage
+    cozystack_nvidia_vgpu_operator_driver_root: /tmp/cozystack-vgpu-stage-test/absent
+    cozystack_nvidia_vgpu_pci_root: /tmp/cozystack-vgpu-stage-test/pci
+    cozystack_nvidia_vgpu_wait_seconds: 5
+
+  tasks:
+    - name: Start from a clean temporary tree
+      ansible.builtin.file:
+        path: "{{ _tmp }}"
+        state: absent
+
+    - name: Create the fake PCI tree
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ _bin }}"
+        - "{{ _pf }}"
+        - "{{ _pci }}/0000:41:00.4/nvidia"
+        - "{{ _pci }}/0000:41:00.5/nvidia"
+        # Third function, deliberately without an nvidia/ group: the
+        # driver populates that group asynchronously, and the profile
+        # stage has to survive one that never appears.
+        - "{{ _pci }}/0000:41:00.6"
+        - "{{ _pci }}/0000:41:00.7/nvidia"
+        # A second PCI domain holding a card with the same bus address.
+        # Different hardware, and the script must never confuse the two.
+        - "{{ _pci }}/0001:41:00.0"
+        - "{{ _pci }}/0001:41:00.4/nvidia"
+
+    - name: Start the physical function with no virtual functions
+      ansible.builtin.copy:
+        dest: "{{ _pf }}/sriov_numvfs"
+        content: "0\n"
+        mode: "0644"
+
+    - name: Give the second domain's card a virtual-function count
+      ansible.builtin.copy:
+        dest: "{{ _pci }}/0001:41:00.0/sriov_numvfs"
+        content: "1\n"
+        mode: "0644"
+
+    - name: Link the second domain's virtual function
+      ansible.builtin.file:
+        src: "{{ _pci }}/0001:41:00.4"
+        dest: "{{ _pci }}/0001:41:00.0/virtfn0"
+        state: link
+
+    - name: Give the second domain's function a profile node
+      ansible.builtin.copy:
+        dest: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+        content: "0\n"
+        mode: "0644"
+
+    - name: Link the virtual functions under the physical function
+      ansible.builtin.file:
+        src: "{{ _pci }}/0000:41:00.{{ item.0 }}"
+        dest: "{{ _pf }}/virtfn{{ item.1 }}"
+        state: link
+      loop:
+        - [4, 0]
+        - [5, 1]
+        - [6, 2]
+        - [7, 3]
+
+    - name: Give each virtual function a resettable profile node
+      ansible.builtin.copy:
+        dest: "{{ _pci }}/0000:41:00.{{ item }}/nvidia/current_vgpu_type"
+        content: "0\n"
+        mode: "0644"
+      loop: [4, 5]
+
+    # A node that exists and is writable by the test for permissions but
+    # rejects the write itself. Standing in for the ordinary case on real
+    # hardware: the per-PF shorthand is written to every function the card
+    # exposes, and the card runs out of instances of that type partway
+    # down the list. The unit must not go red for that.
+    - name: Give one function a node that accepts no value
+      ansible.builtin.file:
+        path: "{{ _pci }}/0000:41:00.7/nvidia/current_vgpu_type"
+        state: directory
+        mode: "0755"
+
+    # Answers only the queries the script actually makes. Reports the
+    # eight-digit domain that nvidia-smi really prints, so the script's
+    # handling of that spelling is what gets exercised. Records every
+    # call it receives; nothing truncates that file, so it accumulates
+    # across every case in this play.
+    - name: Install a fake nvidia-smi
+      ansible.builtin.copy:
+        dest: "{{ _bin }}/nvidia-smi"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          echo "$*" >> "{{ _tmp }}/nvidia-smi.argv"
+          case "$*" in
+            *-L*)
+              echo "GPU 0: NVIDIA Graphics Device (UUID: {{ _uuid }})"
+              echo "GPU 1: NVIDIA Graphics Device (UUID: GPU-99999999-9999-9999-9999-999999999999)" ;;
+            *--query-gpu=index,pci.bus_id,uuid*)
+              echo "0, 00000000:41:00.0, {{ _uuid }}"
+              echo "1, 00000001:41:00.0, GPU-99999999-9999-9999-9999-999999999999" ;;
+            *--query-gpu=mig.mode.current*)
+              cat "{{ _tmp }}/mig_mode" ;;
+            *-mig\ 1*)
+              echo "Enabled" > "{{ _tmp }}/mig_mode" ;;
+            *-q*)
+              echo "    GPU Virtualization Mode"
+              echo "        Virtualization Mode                 : Host VGPU"
+              echo "        Host VGPU Mode                      : $(cat "{{ _tmp }}/host_vgpu_mode")" ;;
+          esac
+
+    # Records its argv so the exact spelling handed to it can be
+    # asserted, and creates the functions the way the real one would.
+    - name: Install a fake sriov-manage
+      ansible.builtin.copy:
+        dest: "{{ _bin }}/sriov-manage"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          echo "$*" >> "{{ _tmp }}/sriov-manage.argv"
+          # Derive the target from the argument. Writing into one fixed
+          # card's node made every case look like the first card's, so a
+          # run against another card ended in retries and still passed.
+          echo "2" > "{{ _pci }}/$2/sriov_numvfs"
+
+    - name: Set the fake GPU's reported state
+      ansible.builtin.copy:
+        dest: "{{ _tmp }}/{{ item.name }}"
+        content: "{{ item.value }}\n"
+        mode: "0644"
+      loop:
+        - {name: mig_mode, value: Disabled}
+        - {name: host_vgpu_mode, value: SR-IOV}
+
+    - name: Render the script for the fake GPU
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:41:00.0"
+            sriov: true
+            mig: true
+            vgpu_profile: 1155
+            vgpu_profiles:
+              "0000:41:00.5": 1160
+
+    - name: Run every stage against the fake GPU
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _stages
+      changed_when: false
+
+    - name: Read back what the stages did
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _results
+      loop:
+        - "{{ _tmp }}/sriov-manage.argv"
+        - "{{ _tmp }}/mig_mode"
+        - "{{ _pci }}/0000:41:00.4/nvidia/current_vgpu_type"
+        - "{{ _pci }}/0000:41:00.5/nvidia/current_vgpu_type"
+
+    - name: Assert a function that rejects the shorthand does not fail the unit
+      ansible.builtin.assert:
+        that:
+          - "'0000:41:00.7' in _stages.stdout"
+          - "\"at that type's instance limit\" in _stages.stdout"
+        fail_msg: >-
+          A function that rejects a profile written by the per-PF
+          shorthand must be logged and skipped, not counted as failed
+          work. Otherwise the configuration the README recommends leaves
+          the unit red at every boot.
+          stdout={{ _stages.stdout }}
+
+    - name: Assert the function with no nvidia group is reported, not fatal
+      ansible.builtin.assert:
+        that:
+          - "'0000:41:00.6' in _stages.stdout"
+          - "'no writable current_vgpu_type after waiting' in _stages.stdout"
+        fail_msg: >-
+          A function whose nvidia sysfs group never appears must be
+          logged and skipped, and the run must continue to the functions
+          after it. An unguarded wait ends the run there instead, with
+          nothing logged. stdout={{ _stages.stdout }}
+
+    - name: Assert every stage did its work
+      ansible.builtin.assert:
+        that:
+          - _stages.rc == 0
+          # sriov-manage takes an lspci filter, and the four-digit sysfs
+          # spelling is the documented one and what every other known
+          # caller passes. nvidia-smi reports eight digits, so this
+          # asserts the script normalised rather than forwarding.
+          - (_results.results[0].content | b64decode).strip() == '-e 0000:41:00.0'
+          # The card in the other PCI domain was never declared, so its
+          # address must not appear at all. Collapsing the domain would
+          # send this to 0000:41:00.0 or 0001:41:00.0 interchangeably.
+          - "'0001:41:00.0' not in (_results.results[0].content | b64decode)"
+          - (_results.results[1].content | b64decode).strip() == 'Enabled'
+          # The function the operator did not name individually takes the
+          # per-PF shorthand.
+          - (_results.results[2].content | b64decode).strip() == '1155'
+          # The one named in vgpu_profiles takes its override.
+          - (_results.results[3].content | b64decode).strip() == '1160'
+        fail_msg: >-
+          Stage output was wrong.
+          rc={{ _stages.rc }},
+          sriov-manage argv={{ _results.results[0].content | b64decode }},
+          mig={{ _results.results[1].content | b64decode }},
+          vf4={{ _results.results[2].content | b64decode }},
+          vf5={{ _results.results[3].content | b64decode }},
+          stdout={{ _stages.stdout }}
+
+    # A second run must change nothing: MIG mode already Enabled, the
+    # functions already present, the profiles already right.
+    - name: Run the stages again
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _stages_again
+      changed_when: false
+
+    - name: Assert the second run is a no-op that still succeeds
+      ansible.builtin.assert:
+        that:
+          - _stages_again.rc == 0
+          - "'already reports MIG mode Enabled' in _stages_again.stdout"
+          - "'already has 2 virtual functions' in _stages_again.stdout"
+        fail_msg: >-
+          Re-running the script on a restored GPU must recognise the work
+          as already done. rc={{ _stages_again.rc }},
+          stdout={{ _stages_again.stdout }}
+
+    # An override naming a function that is not on this GPU would
+    # otherwise be applied to nothing and never mentioned.
+    - name: Render the script with an override for a function elsewhere
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:41:00.0"
+            vgpu_profiles:
+              "0000:99:00.7": 1177
+
+    - name: Run the stages with a misplaced override
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _misplaced
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a misplaced override is reported rather than ignored
+      ansible.builtin.assert:
+        that:
+          - _misplaced.rc == 1
+          - "'per-VF overrides but 0 matched' in _misplaced.stdout"
+        fail_msg: >-
+          An override naming a function that does not belong to the
+          declared GPU must be reported, not silently skipped.
+          rc={{ _misplaced.rc }}, stdout={{ _misplaced.stdout }}
+
+    # A card whose driver does not report SR-IOV must be left alone even
+    # though the operator asked for virtual functions on it.
+    - name: Report the fake GPU as not running in SR-IOV mode
+      ansible.builtin.copy:
+        dest: "{{ _tmp }}/host_vgpu_mode"
+        content: "Non SR-IOV\n"
+        mode: "0644"
+
+    - name: Reset the fake physical function
+      ansible.builtin.copy:
+        dest: "{{ _pf }}/sriov_numvfs"
+        content: "0\n"
+        mode: "0644"
+
+    - name: Render the script for the non-SR-IOV case
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:41:00.0"
+            sriov: true
+            vgpu_profile: 1155
+
+    - name: Truncate the recorded sriov-manage calls
+      ansible.builtin.copy:
+        dest: "{{ _tmp }}/sriov-manage.argv"
+        content: ""
+        mode: "0644"
+
+    - name: Run the VF stage against a non-SR-IOV card
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _non_sriov
+      changed_when: false
+
+    - name: Read back whether sriov-manage was called
+      ansible.builtin.slurp:
+        src: "{{ _tmp }}/sriov-manage.argv"
+      register: _argv_after
+
+    - name: Assert a non-SR-IOV card is declined and left untouched
+      ansible.builtin.assert:
+        that:
+          - _non_sriov.rc == 0
+          - "'observed mode: ' + \"'Non SR-IOV'\" in _non_sriov.stdout"
+          - (_argv_after.content | b64decode) | length == 0
+        fail_msg: >-
+          A card whose driver reports a mode other than SR-IOV must be
+          declined with the observed value logged, and sriov-manage must
+          not be called for it. rc={{ _non_sriov.rc }},
+          stdout={{ _non_sriov.stdout }},
+          argv={{ _argv_after.content | b64decode }}
+
+    # The reproduction of the domain-collapse bug rather than a
+    # restatement of correct behaviour. Declaring only the second-domain
+    # card is the shape that fails when normalise_bdf drops the domain:
+    # the call then goes to the first card instead. Asserting the first
+    # card is called when the first card is declared passes either way.
+    - name: Truncate the recorded calls before the second-domain run
+      ansible.builtin.copy:
+        dest: "{{ _tmp }}/sriov-manage.argv"
+        content: ""
+        mode: "0644"
+
+    # This play accumulates state, and the cases below run after the one
+    # that reports the card as Non SR-IOV. Reset both the mode and the
+    # function count so the virtual-function stage actually runs here
+    # rather than declining, or reporting the work already done.
+    - name: Reset the fixture state before the second-domain run
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ item.content }}\n"
+        mode: "0644"
+      loop:
+        - {path: "{{ _pci }}/0001:41:00.0/sriov_numvfs", content: "0"}
+        - {path: "{{ _tmp }}/host_vgpu_mode", content: "SR-IOV"}
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Render for the second-domain card only
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0001:41:00.0"
+            sriov: true
+
+    - name: Run against the second-domain card only
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Read back which card was called
+      ansible.builtin.slurp:
+        src: "{{ _tmp }}/sriov-manage.argv"
+      register: _second_domain_argv
+
+    - name: Assert the declared card was the one acted on
+      ansible.builtin.assert:
+        that:
+          - "'0001:41:00.0' in (_second_domain_argv.content | b64decode)"
+          - "'-e 0000:41:00.0' not in (_second_domain_argv.content | b64decode)"
+        fail_msg: >-
+          Declaring only the card in the second PCI segment must act on
+          that card. Collapsing the domain sends the call to the card in
+          the first segment, which is hardware nobody declared.
+          argv={{ _second_domain_argv.content | b64decode }}
+
+    # An override belongs to the physical function it was declared under.
+    # With a global key it would reach the other card's function instead.
+    - name: Render with an override declared under the wrong card
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:41:00.0"
+            vgpu_profiles:
+              "0001:41:00.4": 1177
+          - address: "0001:41:00.0"
+            vgpu_profile: 1200
+
+    - name: Run with an override declared under the wrong card
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Read back the second-domain function's profile
+      ansible.builtin.slurp:
+        src: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+      register: _scoped_profile
+
+    - name: Assert an override cannot cross to another card's function
+      ansible.builtin.assert:
+        that:
+          - (_scoped_profile.content | b64decode).strip() == '1200'
+        fail_msg: >-
+          The function took 1177, an override declared under a different
+          physical function, instead of 1200 from its own card's
+          shorthand. Override keys must be scoped to the card they were
+          declared under.
+          got={{ _scoped_profile.content | b64decode }}
+
+    # The other half of the explicit-versus-shorthand distinction. The
+    # shorthand half is asserted above; this is the half that must fail.
+    - name: Render with an explicitly named function that rejects its type
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:41:00.0"
+            vgpu_profiles:
+              "0000:41:00.7": 1160
+
+    - name: Run with an explicitly named function that rejects its type
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _explicit_reject
+      changed_when: false
+      failed_when: false
+
+    - name: Assert an explicitly named function that fails fails the unit
+      ansible.builtin.assert:
+        that:
+          - _explicit_reject.rc == 1
+          - "'was named explicitly and rejected' in _explicit_reject.stdout"
+        fail_msg: >-
+          A function the operator named individually must fail the unit
+          when it will not take its profile. Only the per-PF shorthand is
+          allowed to skip. rc={{ _explicit_reject.rc }},
+          stdout={{ _explicit_reject.stdout }}
+
+    - name: Render with a card that is not on this host
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:99:00.0"
+            sriov: true
+
+    - name: Run with a card that is not on this host
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _absent_card
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a declared card that is absent fails the unit
+      ansible.builtin.assert:
+        that:
+          - _absent_card.rc == 1
+          - "'is not present on this host' in _absent_card.stdout"
+        fail_msg: >-
+          A card the operator declared that is not on the host is
+          declared work that did not happen, so it must fail rather than
+          report success. This is where an unedited example address
+          lands. rc={{ _absent_card.rc }}, stdout={{ _absent_card.stdout }}
+
+    # The branch that keeps the profile stage quiet about a card the
+    # virtual-function stage already declined. It only runs when the card
+    # has no functions, which is the real state of a declined card, so the
+    # fixture has to strip the ones it was given.
+    - name: Strip the second domain's function
+      ansible.builtin.file:
+        path: "{{ _pci }}/0001:41:00.0/virtfn0"
+        state: absent
+
+    # This play accumulates fixture state, so set every input this case
+    # depends on rather than inheriting it. An earlier case left the card
+    # reporting functions, which makes the stage report the work already
+    # done, and another left the mode as SR-IOV, which makes it succeed.
+    # Either one stops the branch under test from being entered.
+    - name: Set the inputs this case depends on
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ item.content }}\n"
+        mode: "0644"
+      loop:
+        - {path: "{{ _pci }}/0001:41:00.0/sriov_numvfs", content: "0"}
+        - {path: "{{ _tmp }}/host_vgpu_mode", content: "Non SR-IOV"}
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Render a declined card that also declares a profile
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0001:41:00.0"
+            sriov: true
+            vgpu_profile: 1155
+
+    - name: Run against a declined card that also declares a profile
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _declined_profile
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a declined card does not fail the unit for its profile
+      ansible.builtin.assert:
+        that:
+          - _declined_profile.rc == 0
+          - "'virtual-function stage declined it' in _declined_profile.stdout"
+        fail_msg: >-
+          A card the virtual-function stage declined has no functions to
+          write a profile to, and saying so twice must not fail the unit.
+          Otherwise a legacy mdev card is red at every boot for a card the
+          script was right to leave alone. rc={{ _declined_profile.rc }},
+          stdout={{ _declined_profile.stdout }}
+
+    # Two declared cards where the second one's profile node is still
+    # being populated when its turn comes. The profile stage's wait is one
+    # budget for the whole stage, so a first card that spends it leaves
+    # nothing for the second, and a function the operator named by hand
+    # then fails for a node that was about to appear. Multi-GPU is the
+    # host this role exists for, so the budget has to be per card.
+    #
+    # The late node is installed on a signal rather than on a clock. A
+    # fixed delay races the first card's give-up: if that card overruns,
+    # the node is already there when the second card looks, the existence
+    # check passes before the deadline test is reached, and the case goes
+    # green against the broken code. Waiting for the give-up line puts the
+    # node after the first card's budget by construction and inside the
+    # second card's own budget regardless of how slow the runner is.
+    - name: Set the inputs the late-node case depends on
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ item.content }}\n"
+        mode: "0644"
+      loop:
+        - {path: "{{ _tmp }}/host_vgpu_mode", content: "SR-IOV"}
+        - {path: "{{ _pci }}/0000:41:00.0/sriov_numvfs", content: "4"}
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    # The first card has to spend the budget, which means every function
+    # it exposes must be missing its node. The fixture gave two of them a
+    # writable node and one a directory, and any of those would let the
+    # card finish without waiting.
+    - name: Take the first card's profile nodes away
+      ansible.builtin.file:
+        path: "{{ _pci }}/0000:41:00.{{ item }}/nvidia/current_vgpu_type"
+        state: absent
+      loop: [4, 5, 6, 7]
+
+    - name: Take the second card's profile node away
+      ansible.builtin.file:
+        path: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+        state: absent
+
+    - name: Give the second card back the function the previous case stripped
+      ansible.builtin.file:
+        src: "{{ _pci }}/0001:41:00.4"
+        dest: "{{ _pci }}/0001:41:00.0/virtfn0"
+        state: link
+
+    - name: Start the run's log empty so the watcher cannot match an older line
+      ansible.builtin.copy:
+        dest: "{{ _tmp }}/late-run.log"
+        content: ""
+        mode: "0644"
+
+    # Fires once the first card reports giving up on a node, which only
+    # happens after the shared budget is spent. The four seconds after
+    # that are measured from an observed event, not from the start of the
+    # run, so the node cannot arrive before the second card's turn. With
+    # the budget per card the second card is three checks into a fifteen
+    # second window when it lands; with one shared budget the second card
+    # has already failed and the node arrives too late to rescue it.
+    - name: Arm a watcher that installs the second card's node once the first gives up
+      ansible.builtin.shell: |
+        for _ in $(seq 1 60); do
+          if grep -q 'has no writable current_vgpu_type after waiting' \
+            "{{ _tmp }}/late-run.log" 2>/dev/null; then
+            sleep 4
+            printf '0\n' > "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+            exit 0
+          fi
+          sleep 1
+        done
+      async: 120
+      poll: 0
+      changed_when: false
+
+    - name: Render two cards with profiles, the second one named by hand
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0000:41:00.0"
+            vgpu_profile: 1155
+          - address: "0001:41:00.0"
+            vgpu_profiles:
+              "0001:41:00.4": 1160
+
+    # Redirected to a file rather than captured, because the watcher has
+    # to read the log while the script is still running.
+    - name: Run the profile stage across both cards
+      ansible.builtin.shell: '"{{ _script }}" > "{{ _tmp }}/late-run.log" 2>&1'
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _late
+      changed_when: false
+      failed_when: false
+
+    - name: Read back the late run's log
+      ansible.builtin.slurp:
+        src: "{{ _tmp }}/late-run.log"
+      register: _late_log
+
+    # Read with cat rather than slurp because the node is absent on the
+    # broken path, and a missing-file module error would replace this
+    # case's own diagnosis with a stack trace.
+    - name: Read back the second card's profile node
+      ansible.builtin.command:
+        cmd: "cat {{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+      register: _late_node
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the second card got its own waiting budget
+      ansible.builtin.assert:
+        that:
+          - _late.rc == 0
+          - "'1160' in _late_node.stdout"
+        fail_msg: >-
+          The first card spent the profile stage's wait, and the second
+          card was given a function to write by hand. If the budget is
+          shared the second card gets no wait at all, its node is still
+          arriving, and the unit goes red at boot for work that was about
+          to be possible. rc={{ _late.rc }},
+          node={{ _late_node.stdout }},
+          log={{ _late_log.content | b64decode }}
+
+    # A GPU reset takes the card away from every VM running on it, so the
+    # script must never issue one. A unit test scans the script's text,
+    # which covers paths this play never runs; this covers any spelling
+    # on the paths it does run, including ones the scan does not know.
+    - name: Read back every call the fake nvidia-smi received
+      ansible.builtin.slurp:
+        src: "{{ _tmp }}/nvidia-smi.argv"
+      register: _smi_argv
+
+    - name: Assert no nvidia-smi call carried a reset flag
+      ansible.builtin.assert:
+        that:
+          - (_smi_argv.content | b64decode) | length > 0
+          - not ((_smi_argv.content | b64decode) is search('(^|\\s)(-r|--gpu-reset)(\\s|$)'))
+        fail_msg: >-
+          Some path in this play called nvidia-smi with a reset flag. A
+          reset takes the GPU away from every vGPU running on it, and
+          nothing the unit does at boot needs one.
+          calls={{ _smi_argv.content | b64decode }}
+
+    - name: Remove the temporary tree
+      ansible.builtin.file:
+        path: "{{ _tmp }}"
+        state: absent
+
+    - name: Remove the artifacts this play installed
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_enable_nvidia_vgpu_host: false

@@ -11,6 +11,7 @@ skip_list:
 # during local development (known issue: ansible-lint#2487).
 mock_roles:
   - cozystack.installer.cozystack
+  - cozystack.installer.nvidia_vgpu_host
 
 # examples/*/site.yml imports external playbooks (k3s.orchestration.site)
 # that may not be installed during linting.

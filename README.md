@@ -194,6 +194,58 @@ k3s also exposes a native `--nonroot-devices` flag (valid on both server and age
 
 The restart handler only fires when the drop-in is first created or its content changes; idempotent re-runs leave k3s untouched. When it does fire, `systemctl restart k3s` (or `k3s-agent`) briefly disrupts the control plane and the node's workloads on that host, so apply such a change in a maintenance window rather than casually mid-day.
 
+#### Opt-in: NVIDIA vGPU host state across reboots
+
+`cozystack_enable_nvidia_vgpu_host: false` (default) installs nothing. Set it to `true` on hosts where you installed the NVIDIA vGPU host driver directly on the node, and the prepare playbook drops a systemd unit that restores vGPU state at boot.
+
+A reboot on such a host loses more than this role restores. These are the three it restores:
+
+- SR-IOV virtual functions. NVIDIA states it outright: "the virtual functions for the physical GPU in the sysfs file system are disabled after the hypervisor host is rebooted or if the driver is reloaded or upgraded". The same section says to use `sriov-manage` and nothing else. Loading the kernel module does not bring them back.
+- Per-VF vGPU profiles. Each function's `current_vgpu_type` resets on PCI re-enumeration, and a function with no profile advertises nothing, so no VM can request it.
+- MIG mode, on Hopper and later. The status bit that kept the setting across reboots on Ampere is gone from the InfoROM on newer parts, so the mode has to be set again after every boot. Enabling it there needs no GPU reset. On Ampere, where a reset would be needed, the mode already persisted and there is nothing to restore. So the unit never resets a GPU.
+
+Where gpu-operator manages the vGPU Manager, that container's entrypoint enables the virtual functions itself and its driver root lives under `/run/nvidia/driver`, so the host has no `sriov-manage`. The unit carries `ConditionPathExists` on the host's `sriov-manage` and systemd reports it skipped. The same covers a host with no NVIDIA GPU and a host running a plain compute driver. If a host-installed driver and an operator-managed driver root are both present, ownership is undecidable, and the unit declines every stage and logs why.
+
+Those are skips, and they exit zero. The unit fails instead when work the operator named did not happen, and the journal names which one. The exception is the per-PF `vgpu_profile` shorthand, which the role writes to every function the card exposes: functions past the card's instance limit reject it, and that is logged and skipped rather than failed, as described below. Common causes of a failure are a declared address that is not present on this host, virtual functions that could not be created, a function named in `vgpu_profiles` that would not take its profile, and MIG mode that could not be set. Treat that as examples rather than the whole set: every failing path logs its own line, so read the journal instead of matching a failure against this paragraph. The declared-address case is the one to watch when copying the example below, since an address left unedited names a card that does not exist. Declaring nothing at all is neither a skip nor a failure: with an empty device list the unit exits zero before looking at the hardware.
+
+This covers the host-installed, ansible-managed path only. For clusters where the operator manages the driver, a DaemonSet reconciling per-VF profiles from a ConfigMap is the right mechanism and this role is not a substitute for one.
+
+The unit only touches GPUs named in `cozystack_nvidia_vgpu_devices`, which is empty by default, so enabling the role is not enough to make it act. Nothing is inferred from the hardware: a card that is not named is never touched, whatever its PCI capabilities advertise. Addresses are PCI addresses or GPU UUIDs, never indices, because indices shift on PCI, BIOS and kernel re-enumeration.
+
+A card sliced uniformly, which is the common case:
+
+```yaml
+cozystack_nvidia_vgpu_devices:
+  - address: "0000:41:00.0"     # PF PCI address, or GPU-<uuid>
+    sriov: true                 # create virtual functions on this PF
+    vgpu_profile: 1155          # the same profile on every VF
+```
+
+A card whose functions do not all carry the same profile:
+
+```yaml
+cozystack_nvidia_vgpu_devices:
+  - address: "0000:41:00.0"
+    sriov: true
+    vgpu_profiles:
+      "0000:41:00.4": 1155
+      "0000:41:00.5": 1160
+```
+
+Every entry must ask for something: `sriov` or `mig` set to `true`, a `vgpu_profile`, or a non-empty `vgpu_profiles`. An entry carrying only an address is rejected rather than ignored, so trimming an example down to `mig: false` on a card you do not want sliced is a playbook failure. Leave that card out instead.
+
+`vgpu_profile` is written to every virtual function the card exposes, which is the maximum the driver created rather than the number you intend to use. A card holds only as many instances of a type as its frame buffer divides into, so the functions past that limit reject the write; the unit logs each one and does not treat it as a failure. `vgpu_profiles` names one function each and wins over `vgpu_profile` for any function it names, and functions named by neither are left alone. Setting both on one card only works where the driver and the GPU support heterogeneous types on a single device, so check that first. Profile ids are the numeric vGPU types listed in a function's `creatable_vgpu_types`; they are per-SKU and per-driver, so read them off the host rather than copying them from here.
+
+The `sriov` and `mig` flags are separate on purpose. Creating virtual functions on a card whose driver reports SR-IOV mode is additive, while enabling MIG mode changes how the card is partitioned. They also have different preconditions, and on a mixed host the answer is per card.
+
+MIG instances are out of scope. The unit restores MIG mode and does not create GPU instances: that geometry is declared state owned by another component, and a second copy of it in a host script will drift from the first. MIG instances survive a reboot on no architecture, and the MIG user guide points at the MIG Partition Editor (`nvidia-mig-parted`) for it, "including creating a systemd service that could recreate the MIG geometry at system startup". That is what to pair with this role if you slice cards.
+
+Setting `cozystack_enable_nvidia_vgpu_host: false` and re-running the prepare playbook disables the unit and removes it along with its script, so the host stops restoring GPU state at the next boot. It does not undo state already applied to the hardware; virtual functions and MIG mode stay as they are until the host reboots or you change them.
+
+Applying the role enables the unit but does not start it, because creating virtual functions or enabling MIG mode changes hardware state that running VMs depend on. To apply it sooner, start `cozystack-nvidia-vgpu-restore.service` inside a maintenance window. Check what it did with `systemctl status cozystack-nvidia-vgpu-restore` and `journalctl --unit cozystack-nvidia-vgpu-restore`. Every declined stage logs its reason, and where a driver-reported value drove the decision, the value it saw.
+
+The unit is ordered after the driver's own vGPU daemons and before nothing else, so a node finishes booting and rejoins the cluster while its GPUs are still being restored. GPU VMs may sit `Pending` for a short window after a reboot until the device plugin rescans and advertises the functions again. That clears on its own.
+
 #### Known limitations
 
 ZFS support depends on the OS ecosystem and kernel flavor. The prepare playbooks skip ZFS automation gracefully in these cases and emit an informational notice:
@@ -381,6 +433,23 @@ These variables are consumed only by the example prepare playbooks in `examples/
 | `cozystack_enable_drbd_dkms` | `true` | `examples/ubuntu/` only: install `drbd-dkms` from the LINBIT PPA on Ubuntu LTS 22.04 / 24.04 hosts so DRBD's kernel module is signed via dkms+shim under Secure Boot. Set `false` on Talos hosts (Talos ships pre-signed DRBD modules in extensions) or where Secure Boot is disabled and the in-cluster compile path is preferred. The toggle stops *future* installs but does NOT undo a prior install — manually `apt purge drbd-dkms` and remove the LINBIT entry from `/etc/apt/sources.list.d/` if you flipped to `false` after a successful run. |
 | `cozystack_drbd_ppa` | `ppa:linbit/linbit-drbd9-stack` | `examples/ubuntu/` only: override to point at a Launchpad PPA mirror of the LINBIT archive. `ansible.builtin.apt_repository` resolves the signing key for `ppa:` URIs by querying Launchpad's REST API directly (no extra packages required). Non-Launchpad URIs (`deb http://internal-mirror/...`) work but you must manage the apt signing key separately — drop a keyring under `/etc/apt/keyrings/` and add `signed-by=` to the repo line. |
 | `cozystack_drbd_supported_releases` | `[jammy, noble]` | `examples/ubuntu/` only: list of Ubuntu release codenames LINBIT's PPA publishes drbd-dkms for. Extend from inventory when LINBIT adds a new series (e.g. `[jammy, noble, resolute]`) without waiting for a collection release. The playbook skips the install and emits a notice on Ubuntu hosts whose `ansible_distribution_release` is not in this list. |
+
+## Role: cozystack.installer.nvidia_vgpu_host
+
+Installs a systemd unit that restores vGPU-relevant GPU state at boot on hosts where the NVIDIA vGPU host driver is installed directly on the node. Opt-in and disabled by default; a no-op on every other host. See [Opt-in: NVIDIA vGPU host state across reboots](#opt-in-nvidia-vgpu-host-state-across-reboots) for what a reboot loses, when the unit declines to act, and how per-VF profiles are addressed.
+
+Runs on every node in the `cluster` group. The `examples/*/prepare-*.yml` playbooks include it unconditionally and the role gates itself on `cozystack_enable_nvidia_vgpu_host`, so turning the toggle off reaches the path that removes the unit.
+
+### Optional variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `cozystack_enable_nvidia_vgpu_host` | `false` | Install and enable the boot unit. Off by default. Enabling it alone changes nothing: the unit still acts only on GPUs named in `cozystack_nvidia_vgpu_devices`, and declines when its preconditions do not hold. |
+| `cozystack_nvidia_vgpu_devices` | `[]` | GPUs the unit may touch and what it may do to each. Empty means the unit is installed but inert. Entry keys: `address` (PCI address or `GPU-<uuid>`, required), `sriov` (create virtual functions on this PF), `mig` (enable MIG mode on this GPU), `vgpu_profile` (profile for every VF of this PF), `vgpu_profiles` (per-VF map; overrides `vgpu_profile`). A bare GPU index is rejected, because indices shift on re-enumeration. Every entry must ask for something: `sriov` or `mig` set to `true`, a `vgpu_profile`, or a non-empty `vgpu_profiles`. An entry that asks for nothing is rejected rather than ignored. Profile ids must be positive, since 0 is not a profile id. |
+| `cozystack_nvidia_vgpu_wait_seconds` | `120` | How long the unit waits for `nvidia-smi` to enumerate a GPU before giving up. It also sets the unit's `TimeoutStartSec`, as this value plus two minutes plus a minute for each declared card. The profile stage spends one waiting budget per card rather than one per function, so the margin does not need raising as a card exposes more of them. The driver's own units may still be starting, and `sriov-manage` is documented to fail while the Virtual GPU Manager initialises. Exceeding it is the one precondition that fails the unit rather than skipping quietly, because reaching it means a host driver is installed and GPUs were declared. |
+| `cozystack_nvidia_vgpu_sriov_manage` | `/usr/lib/nvidia/sriov-manage` | Where the vGPU host driver installs `sriov-manage`. Doubles as the unit's `ConditionPathExists`: absent means either no host-installed driver or a gpu-operator-managed vGPU Manager, and systemd skips the unit. Override only for a non-standard driver install. |
+| `cozystack_nvidia_vgpu_pci_root` | `/sys/bus/pci/devices` | Where the unit looks up PCI devices. No reason to change this on a real host; it exists so the boot script's stages can be exercised against a fake device tree in tests rather than only on GPU hardware. |
+| `cozystack_nvidia_vgpu_operator_driver_root` | `/run/nvidia/driver` | Driver root that gpu-operator's driver container mounts on the host. Finding a driver there as well as on the host leaves GPU ownership ambiguous, and the unit declines every stage rather than guess. |
 
 ## Using with k3s
 

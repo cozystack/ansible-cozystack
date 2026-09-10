@@ -211,6 +211,155 @@ jobs:
       - name: Test host LVM global_filter rendering and effectiveness
         run: ansible-playbook tests/test-lvm-global-filter.yml
 
+  nvidia-vgpu-host:
+    name: NVIDIA vGPU host restore unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Build and install collection
+        run: |
+          ansible-galaxy collection build
+          ansible-galaxy collection install cozystack-installer-*.tar.gz --force
+
+      # The runner has no NVIDIA GPU, which is the point: this asserts
+      # the artifacts render correctly, the unit is skipped by its
+      # condition rather than failing, and every path the script can
+      # take on hardware it is not meant for exits the way it should.
+      # shellcheck and systemd-analyze both run inside the playbook.
+      - name: Test the vGPU host restore unit and its no-op paths
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook
+          tests/test-nvidia-vgpu-host.yml
+
+      - name: Test re-application (second run)
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook
+          tests/test-nvidia-vgpu-host.yml
+
+      # The refusal paths above are everything the script does without a
+      # GPU. This runs the stages themselves against a fake nvidia-smi,
+      # a fake sriov-manage and a fake PCI tree, so the code that writes
+      # to hardware is executed rather than only rendered.
+      - name: Test the restore stages against a fake GPU
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook
+          tests/test-nvidia-vgpu-host-stages.yml
+
+      # Two spellings of one card, or of one virtual function, collapse to
+      # a single key at render time and one of the two profiles is
+      # silently discarded. The role refuses rather than pick a winner.
+      - name: Test that duplicate device addresses are rejected
+        run: |
+          set +e
+          output="$(sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook \
+            tests/test-nvidia-vgpu-host-idempotency.yml \
+            --extra-vars '{"cozystack_nvidia_vgpu_devices":[{"address":"0000:41:00.0","sriov":true},{"address":"41:00.0","sriov":true}]}' 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: two spellings of one card were accepted"
+            exit 1
+          fi
+
+          if ! grep -q "names the same GPU more than" <<< "$output"; then
+            echo "ERROR: rejected, but not by the duplicate-address check"
+            echo "$output" | tail -30
+            exit 1
+          fi
+
+          echo "OK: duplicate device addresses correctly rejected"
+
+      # A card and a virtual function are different levels and had
+      # different rules; the VF check deleted the PCI domain, so two
+      # functions on different segments looked like one.
+      - name: Test that duplicate virtual-function addresses are rejected
+        run: |
+          set +e
+          output="$(sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook \
+            tests/test-nvidia-vgpu-host-idempotency.yml \
+            --extra-vars '{"cozystack_nvidia_vgpu_devices":[{"address":"0000:41:00.0","vgpu_profiles":{"0000:41:00.5":1155,"41:00.5":1160}}]}' 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: two spellings of one virtual function were accepted"
+            exit 1
+          fi
+
+          if ! grep -q "names the same virtual function more than" <<< "$output"; then
+            echo "ERROR: rejected, but not by the duplicate-VF check"
+            echo "$output" | tail -30
+            exit 1
+          fi
+
+          echo "OK: duplicate virtual-function addresses correctly rejected"
+
+      # The other direction, which is the one that regressed: cards and
+      # functions on different PCI segments are distinct and must be
+      # accepted, not refused as duplicates.
+      - name: Test that a multi-segment configuration is accepted
+        run: |
+          set -euo pipefail
+          devices='{"cozystack_nvidia_vgpu_devices":[
+            {"address":"0000:41:00.0","vgpu_profiles":{"0000:41:00.5":1155}},
+            {"address":"0001:41:00.0","vgpu_profiles":{"0001:41:00.5":1160}}]}'
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook \
+            tests/test-nvidia-vgpu-host-idempotency.yml --extra-vars "$devices"
+          echo "OK: cards on different PCI segments accepted"
+
+      # Writing 0 to a function's current_vgpu_type does not set a
+      # profile, so a profile id of 0 is a configuration error rather
+      # than a value to pass through.
+      - name: Test that a zero profile id is rejected
+        run: |
+          set +e
+          for v in '{"cozystack_nvidia_vgpu_devices":[{"address":"0000:41:00.0","vgpu_profile":0}]}' \
+                   '{"cozystack_nvidia_vgpu_devices":[{"address":"0000:41:00.0","vgpu_profiles":{"0000:41:00.5":0}}]}' \
+                   '{"cozystack_nvidia_vgpu_devices":[{"address":"0000:41:00.0","mig":false}]}'; do
+            output="$(sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook \
+              tests/test-nvidia-vgpu-host-idempotency.yml --extra-vars "$v" 2>&1)"
+            status=$?
+            if [ "$status" -eq 0 ]; then
+              echo "ERROR: accepted $v"
+              exit 1
+            fi
+            if ! grep -qE "Invalid entry in|Invalid per-VF" <<< "$output"; then
+              echo "ERROR: rejected for the wrong reason: $v"
+              echo "$output" | tail -20
+              exit 1
+            fi
+          done
+          set -e
+          echo "OK: zero profile ids and entries that ask for nothing are rejected"
+
+      - name: Apply the role on its own
+        run: >-
+          sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook
+          tests/test-nvidia-vgpu-host-idempotency.yml
+
+      - name: Test idempotency (second run reports no change)
+        run: |
+          set -euo pipefail
+          output="$(sudo env "PATH=$PATH" "HOME=$HOME" ansible-playbook \
+            tests/test-nvidia-vgpu-host-idempotency.yml)"
+          echo "$output"
+          if ! grep -q "changed=0" <<< "$output"; then
+            echo "ERROR: re-applying the role reported changes"
+            exit 1
+          fi
+          echo "OK: role is idempotent"
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest

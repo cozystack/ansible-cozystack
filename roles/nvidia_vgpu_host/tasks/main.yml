@@ -1,0 +1,170 @@
+---
+# Both paths sit inside one gated block each. A per-task `when` can be
+# forgotten on the next task added; a single gate cannot.
+- name: Restore NVIDIA vGPU host state across reboots
+  when: cozystack_enable_nvidia_vgpu_host | default(false) | bool
+  block:
+    # GPU indices shift on PCI, BIOS and kernel re-enumeration, so an
+    # index that named the right card yesterday can name a different one
+    # after a firmware update. Only a PCI address or a GPU UUID is
+    # accepted, and anything else is rejected here rather than handed to
+    # nvidia-smi on the host. The vgpu_profiles type check has to pass
+    # before the next task's dict2items runs, or an operator who wrote a
+    # list gets a template traceback instead of this message.
+    - name: Validate declared vGPU device addresses and flags
+      ansible.builtin.assert:
+        that:
+          - item.address is defined
+          - item.address is string
+          - >-
+            item.address is match('^(([0-9a-fA-F]{4}|[0-9a-fA-F]{8}):)?[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$')
+            or item.address is match('^GPU-[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
+          - (item.sriov is not defined) or (item.sriov is boolean)
+          - (item.mig is not defined) or (item.mig is boolean)
+          - (item.vgpu_profile is not defined) or (item.vgpu_profile is integer and item.vgpu_profile > 0)
+          - (item.vgpu_profiles is not defined) or (item.vgpu_profiles is mapping)
+          - >-
+            (item.sriov | default(false)) or (item.mig | default(false))
+            or (item.vgpu_profile is defined)
+            or ((item.vgpu_profiles | default({})) | length > 0)
+        fail_msg: >-
+          Invalid entry in cozystack_nvidia_vgpu_devices:
+          {{ item | to_json }}.
+          Each entry needs an `address` that is either a PCI address
+          (0000:41:00.0, with an optional 4- or 8-digit domain) or a GPU
+          UUID (GPU-<uuid>); a bare GPU index is rejected because
+          indices are not stable across re-enumeration. `sriov` and
+          `mig` must be booleans and `vgpu_profiles` a mapping of VF
+          address to profile id, whose values are positive: 0 is not a
+          profile id. An entry must also ask for something, so set
+          `sriov` or `mig` to true, give a `vgpu_profile`, or give a
+          non-empty `vgpu_profiles`, or leave the card out.
+      loop: "{{ cozystack_nvidia_vgpu_devices }}"
+      loop_control:
+        label: "{{ item.address | default('<no address>') }}"
+
+    # 0000:41:00.5 and 41:00.5 name the same function, so two spellings
+    # of one VF collapse to a single key when the script re-keys its
+    # override map and one of the two profiles is silently discarded.
+    # Rejected rather than resolved: there is no reading of the
+    # operator's intent that makes either the obvious winner.
+    - name: Reject duplicate virtual-function addresses across profile maps
+      ansible.builtin.assert:
+        that:
+          - _cozystack_vgpu_vfs | length == _cozystack_vgpu_vfs | unique | length
+        fail_msg: >-
+          cozystack_nvidia_vgpu_devices names the same virtual function
+          more than once across its vgpu_profiles maps, counting
+          equivalent PCI address spellings as the same function:
+          {{ cozystack_nvidia_vgpu_devices | selectattr('vgpu_profiles', 'defined')
+             | map(attribute='vgpu_profiles') | map('list') | flatten | list }}.
+          Give each function one entry.
+      vars:
+        _cozystack_vgpu_vfs: >-
+          {{ cozystack_nvidia_vgpu_devices
+             | selectattr('vgpu_profiles', 'defined')
+             | map(attribute='vgpu_profiles') | map('list') | flatten
+             | map('lower')
+             | map('regex_replace', _cozystack_vgpu_bdf_domain_re,
+                   _cozystack_vgpu_bdf_domain_sub)
+             | map('regex_replace', _cozystack_vgpu_bdf_bare_re,
+                   _cozystack_vgpu_bdf_bare_sub)
+             | list }}
+
+    # The same collapse one level up. Two entries naming one card each
+    # emit their own stage calls, so the later call overwrites the
+    # earlier one's profiles, and the per-PF override counts collide in
+    # the same way. Equivalent PCI-address spellings count as one card;
+    # different PCI domains do not.
+    - name: Reject duplicate device addresses
+      ansible.builtin.assert:
+        that:
+          - _cozystack_vgpu_addresses | length == _cozystack_vgpu_addresses | unique | length
+        fail_msg: >-
+          cozystack_nvidia_vgpu_devices names the same GPU more than
+          once, counting equivalent PCI address spellings as the same
+          card: {{ cozystack_nvidia_vgpu_devices | map(attribute='address') | list }}.
+          Give each card one entry.
+      vars:
+        _cozystack_vgpu_addresses: >-
+          {{ cozystack_nvidia_vgpu_devices
+             | map(attribute='address') | map('lower')
+             | map('regex_replace', _cozystack_vgpu_bdf_domain_re,
+                   _cozystack_vgpu_bdf_domain_sub)
+             | map('regex_replace', _cozystack_vgpu_bdf_bare_re,
+                   _cozystack_vgpu_bdf_bare_sub)
+             | list }}
+
+    - name: Validate declared per-VF vGPU profile assignments
+      ansible.builtin.assert:
+        that:
+          - >-
+            item.key is match('^(([0-9a-fA-F]{4}|[0-9a-fA-F]{8}):)?[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$')
+          - item.value is integer and item.value > 0
+        fail_msg: >-
+          Invalid per-VF vGPU profile assignment {{ item.key | to_json }}:
+          {{ item.value | to_json }}. Keys are virtual-function PCI
+          addresses and values are numeric vGPU type ids as listed in
+          the VF's creatable_vgpu_types.
+      loop: >-
+        {{ cozystack_nvidia_vgpu_devices
+           | selectattr('vgpu_profiles', 'defined')
+           | map(attribute='vgpu_profiles')
+           | map('dict2items') | flatten }}
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Install the NVIDIA vGPU host restore script
+      ansible.builtin.template:
+        src: cozystack-nvidia-vgpu-restore.sh.j2
+        dest: /usr/local/sbin/cozystack-nvidia-vgpu-restore
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the NVIDIA vGPU host restore unit
+      ansible.builtin.template:
+        src: cozystack-nvidia-vgpu-restore.service.j2
+        dest: /etc/systemd/system/cozystack-nvidia-vgpu-restore.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for the vGPU host restore unit
+
+    # Enabled, not started. Creating virtual functions or enabling MIG
+    # mode changes hardware state that running VMs depend on, so the
+    # change lands at the next boot; an operator who wants it now starts
+    # the unit inside a maintenance window. `systemctl enable` reads the
+    # unit file from disk, so it does not need the handler's reload to
+    # have run first.
+    - name: Enable the NVIDIA vGPU host restore unit for the next boot
+      ansible.builtin.systemd:
+        name: cozystack-nvidia-vgpu-restore.service
+        enabled: true
+
+# Turning the toggle off has to undo a previous run. Without this, a host
+# that was enabled once keeps its unit enabled and keeps changing GPU
+# state at every boot from whatever device list was current then, so the
+# host no longer matches the toggle.
+- name: Remove the NVIDIA vGPU host restore unit when disabled
+  when: not (cozystack_enable_nvidia_vgpu_host | default(false) | bool)
+  block:
+    - name: Check whether the vGPU host restore unit is installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cozystack-nvidia-vgpu-restore.service
+      register: _cozystack_vgpu_unit
+
+    - name: Disable the NVIDIA vGPU host restore unit
+      ansible.builtin.systemd:
+        name: cozystack-nvidia-vgpu-restore.service
+        enabled: false
+      when: _cozystack_vgpu_unit.stat.exists
+
+    - name: Remove the NVIDIA vGPU host restore unit and script
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/cozystack-nvidia-vgpu-restore.service
+        - /usr/local/sbin/cozystack-nvidia-vgpu-restore
+      notify: Reload systemd for the vGPU host restore unit
