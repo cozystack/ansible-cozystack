@@ -88,11 +88,6 @@ declare -A VF_OVERRIDE_COUNT_DECLARED=(
 )
 declare -A VF_OVERRIDE_COUNT=()
 
-# GPUs the virtual-function stage declined because the driver does not
-# report SR-IOV mode. The profile stage stays quiet about those rather
-# than failing the unit for a card it was already told to leave alone.
-declare -A VF_STAGE_DECLINED=()
-
 # Every printf tail below carries `|| true`. A failed write to the
 # journal would otherwise return non-zero from the function, and under
 # errexit a bare `log ...` call would end the run at the exact moment it
@@ -207,6 +202,27 @@ host_vgpu_mode() {
     | tr -d '\r'
 }
 
+# Asks the driver to state its own operating mode rather than derive
+# SR-IOV capability from the PCI capability bits, and reports whether the
+# card must be left alone. Hardware exists that advertises virtual
+# functions in sysfs yet drives vGPU through the legacy mdev path and
+# never creates them. Enabling functions on such a card can unbind a
+# physical function carrying live vGPUs, and writing a profile to one can
+# disturb the vGPUs that path already placed there. Both stages that
+# touch SR-IOV state ask for themselves, so the answer does not depend on
+# which flag the operator declared or on the other stage having run.
+# Returns 0 when the card is refused, which is a valid outcome and never
+# sets FAILED, and non-zero when the stage may proceed. Guard every call:
+# a bare one would end the whole run under errexit on the card the stage
+# was cleared to act on.
+refuse_unless_sriov() {
+  local stage="$1" declared="$2" index="$3" mode
+  mode="$(trim "$(host_vgpu_mode "$index")")"
+  [ "$mode" = "$SRIOV_MODE" ] && return 1
+  log "${stage}: ${declared} declined, host vGPU mode is not SR-IOV or was unrecognised; observed mode: '${mode}'. NVML defines only 'SR-IOV' and 'Non SR-IOV'; an empty value means the driver reported no such field"
+  return 0
+}
+
 {% if not (mig_devices or sriov_devices or profile_all) %}
 # Nothing was declared, so there is no work and no reason to look at the
 # hardware at all. Rendered before the preconditions on purpose: the
@@ -300,21 +316,13 @@ ensure_mig_mode() {
 # ---- STAGE 2: SR-IOV virtual functions ----
 
 ensure_vfs() {
-  local declared="$1" index bus sysfs canonical mode numvfs output attempt
+  local declared="$1" index bus sysfs canonical numvfs output attempt
   if ! read -r index bus < <(resolve_gpu "$declared"); then
     log "VF: ${declared} is not present on this host, so its virtual functions were not restored"
     FAILED=1
     return 0
   fi
-  # Ask the driver to state its own operating mode rather than derive
-  # SR-IOV capability from the PCI capability bits. Hardware exists that
-  # advertises virtual functions in sysfs yet drives vGPU through the
-  # legacy mdev path and never creates them, and enabling functions on
-  # such a card can unbind a physical function carrying live vGPUs.
-  mode="$(trim "$(host_vgpu_mode "$index")")"
-  if [ "$mode" != "$SRIOV_MODE" ]; then
-    log "VF: ${declared} declined, host vGPU mode is not SR-IOV or was unrecognised; observed mode: '${mode}'. NVML defines only 'SR-IOV' and 'Non SR-IOV'; an empty value means the driver reported no such field"
-    VF_STAGE_DECLINED["$(normalise_bdf "$declared")"]=1
+  if refuse_unless_sriov "VF" "$declared" "$index"; then
     return 0
   fi
   if ! sysfs="$(sysfs_for_bdf "$bus")"; then
@@ -369,7 +377,7 @@ ensure_vfs() {
 # request it.
 ensure_vf_profiles() {
   local declared="$1" fallback="$2"
-  local bus sysfs prefix virtfn vf_path vf_bdf profile current node
+  local index bus sysfs prefix virtfn vf_path vf_bdf profile current node
   local -i explicit=0
   local -i seen=0 applied_overrides=0 declared_overrides=0
   # Each card waits on its own budget. Sharing one across cards let the
@@ -377,9 +385,12 @@ ensure_vf_profiles() {
   # named by hand on a later card failed for a node that was seconds from
   # appearing.
   PROFILE_WAIT_DEADLINE=0
-  if ! read -r _ bus < <(resolve_gpu "$declared"); then
+  if ! read -r index bus < <(resolve_gpu "$declared"); then
     log "profile: ${declared} is not present on this host, so no vGPU profile was written"
     FAILED=1
+    return 0
+  fi
+  if refuse_unless_sriov "profile" "$declared" "$index"; then
     return 0
   fi
   if ! sysfs="$(sysfs_for_bdf "$bus")"; then
@@ -458,13 +469,6 @@ ensure_vf_profiles() {
   done
   shopt -u nullglob
   if [ "$seen" -eq 0 ]; then
-    if [ -n "${VF_STAGE_DECLINED[$prefix]:-}" ]; then
-      # Already reported once by the virtual-function stage. Failing here
-      # too would give an operator on a legacy mdev card a red unit at
-      # every boot for a card the script was correct to leave alone.
-      log "profile: ${declared} has no virtual functions because its virtual-function stage declined it; nothing to write"
-      return 0
-    fi
     log "profile: ${declared} has no virtual functions, so no vGPU profile could be written"
     FAILED=1
     return 0
