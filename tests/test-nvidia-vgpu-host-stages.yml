@@ -503,30 +503,27 @@
           report success. This is where an unedited example address
           lands. rc={{ _absent_card.rc }}, stdout={{ _absent_card.stdout }}
 
-    # The branch that keeps the profile stage quiet about a card the
-    # virtual-function stage already declined. It only runs when the card
-    # has no functions, which is the real state of a declined card, so the
-    # fixture has to strip the ones it was given.
-    - name: Strip the second domain's function
-      ansible.builtin.file:
-        path: "{{ _pci }}/0001:41:00.0/virtfn0"
-        state: absent
-
+    # A card whose driver does not report SR-IOV keeps its functions here
+    # rather than being stripped of them, because the functions are the
+    # outcome under test: hardware that advertises them in sysfs while
+    # driving vGPU through the legacy mdev path is what the mode check
+    # exists for, and neither stage may write to one.
+    #
     # This play accumulates fixture state, so set every input this case
-    # depends on rather than inheriting it. An earlier case left the card
-    # reporting functions, which makes the stage report the work already
-    # done, and another left the mode as SR-IOV, which makes it succeed.
-    # Either one stops the branch under test from being entered.
+    # depends on rather than inheriting it. An earlier case left the mode
+    # as SR-IOV, which makes the card pass the check instead of being
+    # declined, and another left a profile on the function, which makes an
+    # unwritten node indistinguishable from a written one.
     - name: Set the inputs this case depends on
       ansible.builtin.copy:
         dest: "{{ item.path }}"
         content: "{{ item.content }}\n"
         mode: "0644"
       loop:
-        - {path: "{{ _pci }}/0001:41:00.0/sriov_numvfs", content: "0"}
+        - {path: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type", content: "0"}
         - {path: "{{ _tmp }}/host_vgpu_mode", content: "Non SR-IOV"}
       loop_control:
-        label: "{{ item.path | basename }}"
+        label: "{{ item.path }}"
 
     - name: Render a declined card that also declares a profile
       ansible.builtin.include_role:
@@ -546,17 +543,79 @@
       changed_when: false
       failed_when: false
 
-    - name: Assert a declined card does not fail the unit for its profile
+    - name: Read back the declined card's profile node
+      ansible.builtin.slurp:
+        src: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+      register: _declined_node
+
+    - name: Assert a declined card keeps its functions untouched
       ansible.builtin.assert:
         that:
+          - "'observed mode: ' + \"'Non SR-IOV'\" in _declined_profile.stdout"
+          - (_declined_node.content | b64decode).strip() == '0'
           - _declined_profile.rc == 0
-          - "'virtual-function stage declined it' in _declined_profile.stdout"
+          - "'profile: 0001:41:00.0 declined' in _declined_profile.stdout"
         fail_msg: >-
-          A card the virtual-function stage declined has no functions to
-          write a profile to, and saying so twice must not fail the unit.
-          Otherwise a legacy mdev card is red at every boot for a card the
-          script was right to leave alone. rc={{ _declined_profile.rc }},
+          The driver does not report SR-IOV for this card, so both stages
+          must refuse it; a write to a function it exposes can disturb
+          vGPUs the legacy mdev path already placed there. Refusing is
+          not a failure either, or such a card is red at every boot for
+          work the script was right not to do.
+          rc={{ _declined_profile.rc }},
+          node={{ _declined_node.content | b64decode }},
           stdout={{ _declined_profile.stdout }}
+
+    # The same card and the same driver mode, declared without sriov. The
+    # virtual-function stage is not rendered for such a card at all, so
+    # the profile stage is the only stage that runs and nothing else can
+    # have asked the driver anything on its behalf.
+    - name: Set the inputs the profile-only case depends on
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ item.content }}\n"
+        mode: "0644"
+      loop:
+        - {path: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type", content: "0"}
+        - {path: "{{ _tmp }}/host_vgpu_mode", content: "Non SR-IOV"}
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Render a card that declares a profile without sriov
+      ansible.builtin.include_role:
+        name: cozystack.installer.nvidia_vgpu_host
+      vars:
+        cozystack_nvidia_vgpu_devices:
+          - address: "0001:41:00.0"
+            vgpu_profile: 1155
+
+    - name: Run against a card that declares a profile without sriov
+      ansible.builtin.command:
+        cmd: "{{ _script }}"
+      environment:
+        PATH: "{{ _bin }}:{{ ansible_env.PATH }}"
+      register: _profile_only
+      changed_when: false
+      failed_when: false
+
+    - name: Read back the profile-only card's node
+      ansible.builtin.slurp:
+        src: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
+      register: _profile_only_node
+
+    - name: Assert the profile stage asks the driver on its own
+      ansible.builtin.assert:
+        that:
+          - (_profile_only_node.content | b64decode).strip() == '0'
+          - _profile_only.rc == 0
+          - "'profile: 0001:41:00.0 declined' in _profile_only.stdout"
+        fail_msg: >-
+          A card whose driver does not report SR-IOV must be left alone
+          whichever flag the operator declared. Without sriov nothing
+          else looks at this card's mode, and writing current_vgpu_type
+          can disturb the vGPUs the legacy mdev path already placed on
+          it. rc={{ _profile_only.rc }},
+          node={{ _profile_only_node.content | b64decode }},
+          stdout={{ _profile_only.stdout }}
 
     # Two declared cards where the second one's profile node is still
     # being populated when its turn comes. The profile stage's wait is one
@@ -598,7 +657,7 @@
         path: "{{ _pci }}/0001:41:00.4/nvidia/current_vgpu_type"
         state: absent
 
-    - name: Give the second card back the function the previous case stripped
+    - name: Give the second card the function this case needs
       ansible.builtin.file:
         src: "{{ _pci }}/0001:41:00.4"
         dest: "{{ _pci }}/0001:41:00.0/virtfn0"
