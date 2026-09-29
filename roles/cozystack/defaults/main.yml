@@ -50,7 +50,14 @@ cozystack_helm_diff_version: "3.12.5"
 cozystack_create_platform_package: true
 
 # Platform Package variant (determines which platform components are deployed)
-# Available: default, isp-full, isp-hosted, isp-full-generic
+# Available: default, isp-full, isp-hosted, isp-full-generic.
+# Newer Cozystack releases also ship isp-slim, isp-slim-generic and
+# isp-hosted-slim (added by cozystack/cozystack#4595).
+# They install the base platform only. isp-slim-generic is the one for
+# k3s; isp-slim is its Talos counterpart. Both run Cilium without
+# Kube-OVN, and isp-hosted-slim uses the host CNI,
+# so the chart ignores cozystack_pod_cidr, cozystack_pod_gateway,
+# cozystack_svc_cidr and cozystack_join_cidr there.
 cozystack_platform_variant: "isp-full-generic"
 
 # Domain for Cozystack services (dashboard, grafana, etc.)
