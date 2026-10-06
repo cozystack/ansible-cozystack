@@ -5,6 +5,15 @@ cozystack.installer Release Notes
 Unreleased
 ==========
 
+- The role docs list the minimal platform variants for
+  ``cozystack_platform_variant``:
+  ``isp-slim``, ``isp-slim-generic`` and ``isp-hosted-slim``. They need a
+  Cozystack release that includes cozystack/cozystack#4595. On
+  generic Linux use ``isp-slim-generic``: it installs the base platform
+  only, networking is Cilium without Kube-OVN, and the pod CIDR comes
+  from k3s. The chart ignores ``cozystack_pod_cidr``,
+  ``cozystack_pod_gateway``, ``cozystack_svc_cidr`` and
+  ``cozystack_join_cidr`` there.
 - CI: new ``hack/check-versions.sh`` invariant check runs in the ``Lint``
   job and fails the build if version strings drift across the three
   tracked dependencies: the ``cozy-installer`` chart version must match

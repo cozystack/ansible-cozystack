@@ -323,7 +323,7 @@ cluster-cidr: 10.42.0.0/16
 service-cidr: 10.43.0.0/16
 ```
 
-These CIDRs are the k3s defaults. The example clusters set them via the `server_config_yaml` variable consumed by `k3s.orchestration`, defined in `examples/<distro>/inventory.yml`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values.
+These CIDRs are the k3s defaults. The example clusters set them via the `server_config_yaml` variable consumed by `k3s.orchestration`, defined in `examples/<distro>/inventory.yml`. The role variables `cozystack_pod_cidr` and `cozystack_svc_cidr` must match — they default to the same values. On isp-slim-generic, the slim variant for k3s, the chart ignores both: Cilium takes pod ranges from k3s.
 
 ## Installation
 
@@ -407,7 +407,7 @@ Runs on `server[0]` only.
 | `cozystack_helm_version` | `3.20.0` | Helm binary version to install |
 | `cozystack_helm_binary` | `/usr/local/bin/helm` | Path to Helm binary on target |
 | `cozystack_create_platform_package` | `true` | Create Platform Package CR after install |
-| `cozystack_platform_variant` | `isp-full-generic` | Platform variant: default, isp-full, isp-hosted, isp-full-generic |
+| `cozystack_platform_variant` | `isp-full-generic` | Platform variant: default, isp-full, isp-hosted, isp-full-generic. Cozystack releases that include cozystack/cozystack#4595 also accept isp-slim-generic (the minimal variant for k3s), isp-slim (its Talos counterpart) and isp-hosted-slim. |
 | `cozystack_root_host` | `""` | Domain for Cozystack services (empty = skip publishing) |
 | `cozystack_external_ips` | `[]` | List of external IPs for ingress-nginx Service. Required on platforms without a native LB (cloud VMs, bare metal). Each entry must be a valid IPv4/IPv6 address. |
 | `cozystack_tenant_root_ingress` | `false` | Enable ingress on the root tenant. When `true`, patches the root Tenant CR after Platform Package apply to create IngressClass and ingress-nginx controller. |
