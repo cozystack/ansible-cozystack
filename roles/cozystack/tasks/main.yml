@@ -24,6 +24,13 @@
       templates/cozystack-operator.yaml and provides no override.
       Remove cozystack_namespace from inventory.
 
+- name: Validate OIDC publishing domain
+  ansible.builtin.assert:
+    that: cozystack_root_host | length > 0
+    fail_msg: cozystack_root_host is required to publish Keycloak when cozystack_oidc_enabled is true.
+    quiet: true
+  when: cozystack_oidc_enabled | bool
+
 - name: Compute and validate master node IPs for kube-ovn
   ansible.builtin.include_tasks: compute-master-nodes.yml
   when: cozystack_create_platform_package
