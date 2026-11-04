@@ -32,3 +32,8 @@ spec:
           externalIPs: {{ cozystack_external_ips | to_json }}
 {% endif %}
 {% endif %}
+{% if cozystack_oidc_enabled | bool %}
+        authentication:
+          oidc:
+            enabled: true
+{% endif %}

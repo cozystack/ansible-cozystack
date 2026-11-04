@@ -12,6 +12,7 @@
         cozystack_api_server_host: "{{ cozystack_api_server_host | default('127.0.0.1') }}"
         cozystack_api_server_port: "{{ cozystack_api_server_port | default('6443') }}"
         cozystack_platform_variant: "{{ cozystack_platform_variant | default('isp-full-generic') }}"
+        cozystack_oidc_enabled: "{{ cozystack_oidc_enabled | default(false) }}"
         cozystack_root_host: "{{ cozystack_root_host | default('') }}"
         cozystack_external_ips: "{{ cozystack_external_ips | default([]) }}"
         cozystack_pod_cidr: "{{ cozystack_pod_cidr | default('10.42.0.0/16') }}"
