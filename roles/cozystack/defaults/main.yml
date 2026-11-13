@@ -86,3 +86,5 @@ cozystack_join_cidr: "100.64.0.0/16"
 
 # Timeout to wait for operator and CRDs (seconds)
 cozystack_operator_wait_timeout: "300"
+
+cozystack_oidc_enabled: false
