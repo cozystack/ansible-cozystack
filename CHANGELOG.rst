@@ -5,6 +5,8 @@ cozystack.installer Release Notes
 Unreleased
 ==========
 
+- Add opt-in platform OIDC and a separate parent k3s post-install playbook. After Keycloak discovery and signing keys are reachable from every server, the playbook writes a persistent additive drop-in and restarts changed servers one at a time. The generic role does not change host API authentication. Disabling the option leaves an existing API drop-in unmanaged. Until the next release, the OIDC workflow requires the collection from main or the current source checkout; the example pipelines keep their release pins.
+
 - The role docs list the minimal platform variants for
   ``cozystack_platform_variant``:
   ``isp-slim``, ``isp-slim-generic`` and ``isp-hosted-slim``. They need a

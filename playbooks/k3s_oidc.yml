@@ -1,0 +1,196 @@
+---
+- name: Verify parent k3s OIDC prerequisites
+  hosts: server
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Leave existing OIDC configuration unmanaged when disabled
+      ansible.builtin.meta: end_host
+      when: not (cozystack_oidc_enabled | default(false) | bool)
+  tasks:
+    - name: Resolve OIDC configuration
+      ansible.builtin.set_fact:
+        _cozystack_oidc_issuer: >-
+          {{ cozystack_oidc_issuer | default('https://keycloak.' ~ (cozystack_root_host | default('')) ~ '/realms/cozy', true) }}
+        _cozystack_oidc_config_path: /etc/rancher/k3s/config.yaml.d/90-cozystack-oidc.yaml
+
+    - name: Validate OIDC issuer
+      ansible.builtin.assert:
+        that:
+          - cozystack_root_host | default('') | length > 0
+          - _cozystack_oidc_issuer is match('^https://[^/@?#\s]+/[^?#\s]+$')
+        fail_msg: Set cozystack_root_host and use an HTTPS issuer without credentials, query parameters or fragments.
+        quiet: true
+
+    - name: Read OIDC discovery from each server
+      ansible.builtin.uri:
+        url: "{{ _cozystack_oidc_issuer }}/.well-known/openid-configuration"
+        use_proxy: false
+        use_netrc: false
+        validate_certs: true
+      register: _cozystack_oidc_discovery
+      until: _cozystack_oidc_discovery.status == 200
+      retries: 60
+      delay: 10
+      check_mode: false
+
+    - name: Validate OIDC discovery
+      ansible.builtin.assert:
+        that:
+          - _cozystack_oidc_discovery.json.issuer == _cozystack_oidc_issuer
+          - _cozystack_oidc_discovery.json.jwks_uri == _cozystack_oidc_issuer ~ '/protocol/openid-connect/certs'
+        quiet: true
+
+    - name: Read OIDC signing keys from each server
+      ansible.builtin.uri:
+        url: "{{ _cozystack_oidc_discovery.json.jwks_uri }}"
+        use_proxy: false
+        use_netrc: false
+        validate_certs: true
+      register: _cozystack_oidc_jwks
+      until: >-
+        _cozystack_oidc_jwks.status | default(0) == 200 and
+        ((_cozystack_oidc_jwks.json | default({})).get('keys', []) | length) > 0
+      retries: 60
+      delay: 10
+      check_mode: false
+
+    - name: Read k3s service configuration
+      ansible.builtin.systemd_service:
+        name: k3s
+        daemon_reload: false
+      register: _cozystack_oidc_service
+      no_log: true
+
+    - name: Require a running k3s server
+      ansible.builtin.assert:
+        that: _cozystack_oidc_service.status.MainPID | int > 0
+        quiet: true
+
+    - name: Read the running k3s environment
+      ansible.builtin.slurp:
+        src: "/proc/{{ _cozystack_oidc_service.status.MainPID }}/environ"
+      register: _cozystack_oidc_environment
+      no_log: true
+
+    - name: Validate k3s configuration sources
+      ansible.builtin.assert:
+        that:
+          - "'--kube-apiserver-arg' not in _cozystack_oidc_service.status.ExecStart"
+          - _cozystack_oidc_cli_configs | reject('equalto', '/etc/rancher/k3s/config.yaml') | list | length == 0
+          - "'K3S_KUBE_APISERVER_ARG=' not in (_cozystack_oidc_environment.content | b64decode)"
+          - _cozystack_oidc_env_configs | reject('equalto', '/etc/rancher/k3s/config.yaml') | list | length == 0
+        fail_msg: Use the default k3s config path and move CLI or environment kube-apiserver arguments into YAML before enabling OIDC.
+        quiet: true
+      vars:
+        _cozystack_oidc_cli_configs: >-
+          {{ _cozystack_oidc_service.status.ExecStart | regex_findall('(?:^|\s)(?:--config(?:=|\s+)|-c(?:=|\s)*)([^\s;]*)') }}
+        _cozystack_oidc_env_configs: >-
+          {{ (_cozystack_oidc_environment.content | b64decode) | regex_findall('(?:^|\x00)K3S_CONFIG_FILE=([^\x00]+)') }}
+      no_log: true
+
+    - name: Inspect the k3s configuration directory
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/config.yaml.d
+      register: _cozystack_oidc_config_dir
+
+    - name: Find existing k3s configuration fragments
+      ansible.builtin.find:
+        paths: /etc/rancher/k3s/config.yaml.d
+        patterns: ['*.[yY][aA][mM][lL]', '*.[yY][mM][lL]']
+        hidden: true
+        file_type: any
+      register: _cozystack_oidc_fragments
+      when: _cozystack_oidc_config_dir.stat.exists
+
+    - name: Inspect the optional base k3s configuration
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/config.yaml
+      register: _cozystack_oidc_base
+
+    - name: Read existing k3s configuration
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop: >-
+        {{ (['/etc/rancher/k3s/config.yaml'] if _cozystack_oidc_base.stat.exists else []) +
+           (_cozystack_oidc_fragments.files | default([]) | rejectattr('isdir') | map(attribute='path') |
+            reject('equalto', _cozystack_oidc_config_path) | list) }}
+      register: _cozystack_oidc_existing
+      no_log: true
+
+    - name: Validate existing API-server configuration
+      ansible.builtin.assert:
+        that:
+          - _cozystack_oidc_config is none or _cozystack_oidc_config is mapping
+          - _cozystack_oidc_api_arg_names | select('match', '^(oidc-|authentication-config$)') | list | length == 0
+          - item.item <= _cozystack_oidc_config_path or 'kube-apiserver-arg' not in _cozystack_oidc_config_map
+        fail_msg: Existing API authentication or a later replacing kube-apiserver-arg conflicts with the managed OIDC drop-in.
+        quiet: true
+      vars:
+        _cozystack_oidc_config: "{{ item.content | b64decode | from_yaml }}"
+        _cozystack_oidc_config_map: "{{ _cozystack_oidc_config if _cozystack_oidc_config is mapping else {} }}"
+        _cozystack_oidc_base_args: "{{ _cozystack_oidc_config_map.get('kube-apiserver-arg', []) | default([], true) }}"
+        _cozystack_oidc_extra_args: "{{ _cozystack_oidc_config_map.get('kube-apiserver-arg+', []) | default([], true) }}"
+        _cozystack_oidc_api_args: >-
+          {{ ([_cozystack_oidc_base_args] if _cozystack_oidc_base_args is string else _cozystack_oidc_base_args) +
+             ([_cozystack_oidc_extra_args] if _cozystack_oidc_extra_args is string else _cozystack_oidc_extra_args) }}
+        _cozystack_oidc_api_arg_names: >-
+          {{ _cozystack_oidc_api_args | map('regex_replace', '^--', '') | map('regex_replace', '=.*$', '') | list }}
+      loop: "{{ _cozystack_oidc_existing.results }}"
+      no_log: true
+
+- name: Configure parent k3s OIDC one server at a time
+  hosts: server
+  gather_facts: false
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Leave existing OIDC configuration unmanaged when disabled
+      ansible.builtin.meta: end_host
+      when: not (cozystack_oidc_enabled | default(false) | bool)
+  tasks:
+    - name: Create the k3s configuration directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s/config.yaml.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Append Kubernetes OIDC arguments
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/config.yaml.d/90-cozystack-oidc.yaml
+        content: |
+          kube-apiserver-arg+:
+            - oidc-issuer-url={{ _cozystack_oidc_issuer }}
+            - oidc-client-id=kubernetes
+            - oidc-username-claim=preferred_username
+            - oidc-groups-claim=groups
+        owner: root
+        group: root
+        mode: '0600'
+      notify: Restart k3s for OIDC
+
+    - name: Apply changed OIDC arguments
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for the local Kubernetes API
+      ansible.builtin.command: >-
+        k3s kubectl --context={{ cozystack_kubeconfig_context | default('default') }}
+        --kubeconfig={{ cozystack_kubeconfig | default('/etc/rancher/k3s/k3s.yaml') }}
+        --server=https://127.0.0.1:{{ api_port | default(6443) }}
+        --request-timeout=10s get --raw=/readyz
+      register: _cozystack_oidc_api_ready
+      changed_when: false
+      until: _cozystack_oidc_api_ready.rc == 0 and _cozystack_oidc_api_ready.stdout == 'ok'
+      retries: 60
+      delay: 5
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart k3s for OIDC
+      ansible.builtin.systemd_service:
+        name: k3s
+        state: restarted

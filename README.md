@@ -380,6 +380,7 @@ Both stages are handled automatically by the `cozystack` role.
 | Playbook | Description |
 | --- | --- |
 | `cozystack.installer.site` | Install Cozystack on `server[0]` |
+| `cozystack.installer.k3s_oidc` | Configure opt-in OIDC on parent k3s servers after Keycloak is reachable |
 
 ## Role: cozystack.installer.cozystack
 
@@ -409,6 +410,7 @@ Runs on `server[0]` only.
 | `cozystack_create_platform_package` | `true` | Create Platform Package CR after install |
 | `cozystack_platform_variant` | `isp-full-generic` | Platform variant: default, isp-full, isp-hosted, isp-full-generic. Cozystack releases that include cozystack/cozystack#4595 also accept isp-slim-generic (the minimal variant for k3s), isp-slim (its Talos counterpart) and isp-hosted-slim. |
 | `cozystack_root_host` | `""` | Domain for Cozystack services (empty = skip publishing) |
+| `cozystack_oidc_enabled` | `false` | Unreleased: enable platform OIDC. Configure the parent k3s API separately with `cozystack.installer.k3s_oidc`. Requires `cozystack_root_host`. |
 | `cozystack_external_ips` | `[]` | List of external IPs for ingress-nginx Service. Required on platforms without a native LB (cloud VMs, bare metal). Each entry must be a valid IPv4/IPv6 address. |
 | `cozystack_tenant_root_ingress` | `false` | Enable ingress on the root tenant. When `true`, patches the root Tenant CR after Platform Package apply to create IngressClass and ingress-nginx controller. |
 | `cozystack_pod_cidr` | `10.42.0.0/16` | Pod CIDR for Platform Package |
@@ -476,6 +478,39 @@ ansible-playbook --inventory inventory.yml k3s.orchestration.site
 ```
 
 Keeping them in the inventory is required, not cosmetic. `set_fact`/`group_by` (play scope) live only inside one process, so splitting the run dropped them. A playbook-adjacent `group_vars/all.yml` is not loaded for the imported `k3s.orchestration.site` play either, so under an external inventory (as CI uses) it silently produced an upstream-default k3s. Inventory vars avoid both traps. Custom inventories must carry these k3s vars and the `k3s_cluster` group (`children: server, agent`) themselves.
+
+### Opt-in OIDC for the parent k3s API
+
+This feature is **Unreleased** and is not included in collection tag `v1.7.0`. It requires the collection from `main` or a build of the current source checkout. The example requirements remain pinned to the released version; their normal pipelines do not import the new playbook. After installing the example requirements, install the unreleased collection explicitly:
+
+```bash
+ansible-galaxy collection install 'git+https://github.com/cozystack/ansible-cozystack.git,main' --force
+```
+
+Platform OIDC and API-server OIDC are separate settings. Set these variables in the `cluster` inventory group's `vars`:
+
+```yaml
+cozystack_oidc_enabled: true
+cozystack_root_host: "example.org"
+cozystack_tenant_root_ingress: true
+```
+
+Run the normal bootstrap/site workflow first, then invoke the parent API configuration separately:
+
+```bash
+ansible-playbook --inventory inventory.yml site.yml
+ansible-playbook --inventory inventory.yml cozystack.installer.k3s_oidc
+```
+
+With the unreleased collection installed, the first command bootstraps k3s without OIDC arguments and enables platform OIDC during Cozystack installation. Storage, ingress routing, DNS and a trusted HTTPS certificate for `keycloak.example.org` must be available. The second command waits for matching issuer discovery and non-empty signing keys from every server before modifying any server. It then writes `/etc/rancher/k3s/config.yaml.d/90-cozystack-oidc.yaml`, restarts changed servers one at a time, and waits for each local API's `/readyz` before continuing. A failed preflight leaves every server unchanged; a failed rollout stops before the next server. If Cozystack and Keycloak are already installed and published, only the second command is needed.
+
+The issuer defaults to `https://keycloak.<cozystack_root_host>/realms/cozy`. Set `cozystack_oidc_issuer` to override it when the published Keycloak issuer differs. The client is `kubernetes`, the username claim is `preferred_username`, and the group claim is `groups`. The optional `cozystack_kubeconfig_context` defaults to `default`; the readiness check uses `cozystack_kubeconfig`, defaulting to `/etc/rancher/k3s/k3s.yaml` on each server. The API address is explicitly `https://127.0.0.1:<api_port>` (`api_port` defaults to `6443`), so readiness cannot be satisfied by another server behind a load balancer.
+
+The drop-in appends with `kube-apiserver-arg+`, preserving API arguments in the base configuration and surviving `k3s.orchestration` site/upgrade reruns. Existing OIDC flags, structured `authentication-config`, command-line or environment API-argument overrides, custom config paths, and later drop-ins that replace the argument list are rejected before rollout. Migrate those settings explicitly rather than mixing authentication mechanisms. This workflow requires systemd-managed k3s with its default configuration path and [k3s YAML drop-in support](https://docs.k3s.io/installation/configuration#value-merge-behavior); it does not configure other Kubernetes distributions.
+
+Setting `cozystack_oidc_enabled: false` skips the parent API playbook: it does **not** remove the existing drop-in, disable API OIDC or restart k3s. Plan authentication removal separately. A normal rerun with unchanged content does not restart servers. In `--check` mode, enabled preflight still reads discovery, signing keys and local configuration, but no drop-in is written and no service is restarted.
+
+The generic `cozystack.installer.site` playbook only enables the platform setting; it never changes the host Kubernetes control plane. On kubeadm, RKE2 or managed Kubernetes, configure API authentication using that distribution's supported procedure. Creating users and granting tenant or administrator RBAC are separate from enabling OIDC; keep an administrative client-certificate kubeconfig available during rollout.
 
 ## Important notes
 

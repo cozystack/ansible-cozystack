@@ -52,6 +52,9 @@ jobs:
       - name: Syntax check RHEL example
         run: ansible-playbook examples/rhel/prepare-rhel.yml --syntax-check
 
+      - name: Check released examples and standalone OIDC compatibility
+        run: ./hack/check-oidc-compat.sh
+
       - name: Check examples split-invocation contract
         run: ./hack/check-examples-k3s.sh
 
