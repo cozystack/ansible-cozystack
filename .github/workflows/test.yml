@@ -24,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install dependencies
         run: pip install ansible-core ansible-lint
@@ -73,7 +73,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install ansible-core and unit test dependencies
         run: pip install ansible-core pytest pytest-xdist pytest-forked pytest-mock
@@ -96,7 +96,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install Ansible
         run: pip install ansible-core
@@ -157,7 +157,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install Ansible
         run: pip install ansible-core
@@ -203,7 +203,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install Ansible
         run: pip install ansible-core
@@ -224,7 +224,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install Ansible
         run: pip install ansible-core
@@ -373,7 +373,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install Ansible
         run: pip install ansible-core
